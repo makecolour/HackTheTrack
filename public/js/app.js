@@ -13,6 +13,8 @@ let cart = {};
 let myOrders = [];
 let rfidScanning = false;
 let vehiclePos = { pointId: 'S', positionType: 'unknown' };
+let sessionConfig = null;
+let keysDown = {};
 
 const API = '';
 
@@ -85,6 +87,7 @@ function enterApp() {
         document.getElementById('staff-page').classList.remove('hidden');
         document.getElementById('staff-name').textContent = currentUser.displayName || currentUser.username;
         loadAllOrders();
+        loadSessionConfig();
         showTab('orders');
     }
 }
@@ -125,6 +128,7 @@ function connectSocket() {
         vehiclePos = data;
         updateVehicleUI();
         drawMap();
+        drawMinimap();
     });
     socket.on('vehicle-position-estimate', (data) => {
         // Interpolated position for smooth map rendering
@@ -134,6 +138,7 @@ function connectSocket() {
         vehiclePos = { pointId: 'S', positionType: 'confirmed' };
         updateVehicleUI();
         drawMap();
+        drawMinimap();
     });
     socket.on('navigation-log', (data) => {
         addNavLog(data);
@@ -149,6 +154,7 @@ function connectSocket() {
     socket.on('session-configured', (data) => {
         showNotification(`Session configured: ${data.targetPointA || '?'} → ${data.targetPointB || '?'}`);
         loadMapPoints(); // Reload map points after sync
+        loadSessionConfig(); // Update minimap targets
     });
     socket.on('payment-confirmed', (data) => {
         showNotification(`Payment confirmed for order #${data.orderId}`);
@@ -172,8 +178,16 @@ async function loadMapPoints() {
     if (data.success) {
         mapPoints = data.data;
         populateDestinations();
-        populateNavButtons();
         drawMap();
+        drawMinimap();
+    }
+}
+
+async function loadSessionConfig() {
+    const data = await apiFetch('/api/session');
+    if (data.success && data.data) {
+        sessionConfig = data.data;
+        drawMinimap();
     }
 }
 
@@ -390,28 +404,6 @@ function toggleRfid() {
     document.getElementById('rfid-btn').textContent = rfidScanning ? 'Stop RFID Scan' : 'Start RFID Scan';
 }
 
-function populateNavButtons() {
-    const container = document.getElementById('nav-buttons');
-    if (!container) return;
-    const destinations = mapPoints.filter(p => p.type === 'destination' || p.type === 'start' || p.type === 'stop');
-    container.innerHTML = destinations.map(p => `
-        <button onclick="navigateTo('${p.pointId}')"
-                class="bg-zinc-700 hover:bg-zinc-600 py-2 rounded-lg text-sm font-bold transition-colors">
-            ${escapeHtml(p.pointId)} — ${escapeHtml(p.label)}
-        </button>
-    `).join('');
-}
-
-async function navigateTo(pointId) {
-    const from = vehiclePos.pointId || 'S';
-    const data = await apiFetch(`/api/map/path?from=${from}&to=${pointId}`);
-    if (data.success && data.data) {
-        socket.emit('auto-navigate', { path: data.data, orderId: null, isReturn: false });
-        drawPathOnMap(data.data);
-        addNavLog({ message: `Navigating: ${from} → ${pointId}` });
-    }
-}
-
 function addNavLog(data) {
     const container = document.getElementById('nav-log');
     if (!container) return;
@@ -596,7 +588,11 @@ function showTab(tabName) {
     const btn = document.querySelector(`[data-tab="${tabName}"]`);
     if (btn) btn.classList.add('bg-zinc-700');
 
-    if (tabName === 'drive') initCamera();
+    if (tabName === 'drive') {
+        initCamera();
+        initKeyboardControls();
+        drawMinimap();
+    }
     if (tabName === 'map') setTimeout(drawMap, 100);
 }
 
@@ -736,6 +732,172 @@ function showReceiptModal(invoice) {
 
 function closeReceiptModal() {
     document.getElementById('receipt-modal').classList.add('hidden');
+}
+
+// ── WASD Keyboard Controls ──
+let keyboardInitialized = false;
+function initKeyboardControls() {
+    if (keyboardInitialized) return;
+    keyboardInitialized = true;
+
+    const keyMap = {
+        'w': 'forward', 'arrowup': 'forward',
+        's': 'backward', 'arrowdown': 'backward',
+        'a': 'left', 'arrowleft': 'left',
+        'd': 'right', 'arrowright': 'right',
+    };
+
+    document.addEventListener('keydown', (e) => {
+        // Don't capture when typing in inputs
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        const key = e.key.toLowerCase();
+        const cmd = keyMap[key];
+        if (!cmd) return;
+        e.preventDefault();
+        if (keysDown[key]) return; // Already held
+        keysDown[key] = true;
+        motorCmd(cmd);
+    });
+
+    document.addEventListener('keyup', (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        const key = e.key.toLowerCase();
+        if (!keyMap[key]) return;
+        e.preventDefault();
+        delete keysDown[key];
+        // Only stop if no other movement keys held
+        const anyHeld = Object.keys(keysDown).some(k => keyMap[k]);
+        if (!anyHeld) motorCmd('stop');
+    });
+}
+
+// ── Camera Expand ──
+let cameraExpanded = false;
+function toggleCameraExpand() {
+    cameraExpanded = !cameraExpanded;
+    const container = document.getElementById('camera-container');
+    const nav = document.querySelector('#staff-page > nav');
+    const btn = document.getElementById('camera-expand-btn');
+
+    if (cameraExpanded) {
+        container.classList.add('fixed', 'inset-0', 'z-50');
+        if (nav) nav.classList.add('hidden');
+        btn.textContent = '✕';
+    } else {
+        container.classList.remove('fixed', 'inset-0', 'z-50');
+        if (nav) nav.classList.remove('hidden');
+        btn.textContent = '⛶';
+    }
+}
+
+// ── Minimap ──
+function drawMinimap() {
+    const canvas = document.getElementById('minimap-canvas');
+    if (!canvas || mapPoints.length === 0) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+
+    const padding = 20;
+    const scaleX = (W - padding * 2) / 600;
+    const scaleY = (H - padding * 2) / 700;
+    const tx = (id) => {
+        const p = mapPoints.find(m => m.pointId === id);
+        return p ? { x: p.x * scaleX + padding, y: p.y * scaleY + padding } : null;
+    };
+
+    ctx.clearRect(0, 0, W, H);
+
+    // Background
+    ctx.fillStyle = 'rgba(24, 24, 27, 0.8)';
+    ctx.fillRect(0, 0, W, H);
+
+    // Draw connections
+    ctx.strokeStyle = '#3f3f46';
+    ctx.lineWidth = 2;
+    const drawn = new Set();
+    mapPoints.forEach(p => {
+        const from = tx(p.pointId);
+        if (!from) return;
+        (p.connections || []).forEach(cId => {
+            const key = [p.pointId, cId].sort().join('-');
+            if (drawn.has(key)) return;
+            drawn.add(key);
+            const to = tx(cId);
+            if (!to) return;
+            ctx.beginPath();
+            ctx.moveTo(from.x, from.y);
+            ctx.lineTo(to.x, to.y);
+            ctx.stroke();
+        });
+    });
+
+    // Highlight target A and B
+    const targetA = sessionConfig?.target_point_a;
+    const targetB = sessionConfig?.target_point_b;
+
+    // Draw points
+    mapPoints.forEach(p => {
+        const pos = tx(p.pointId);
+        if (!pos) return;
+
+        const isTargetA = targetA && p.pointId === targetA;
+        const isTargetB = targetB && p.pointId === targetB;
+
+        let color = p.type === 'start' ? '#22c55e' :
+                    p.type === 'destination' ? '#3b82f6' :
+                    p.type === 'intersection' ? '#eab308' :
+                    p.type === 'stop' ? '#ef4444' : '#71717a';
+
+        const radius = (isTargetA || isTargetB) ? 10 : 7;
+
+        // Glow ring for targets
+        if (isTargetA || isTargetB) {
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, radius + 4, 0, Math.PI * 2);
+            ctx.strokeStyle = isTargetA ? '#f97316' : '#a855f7';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Label
+        ctx.font = 'bold 8px sans-serif';
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.fillText(p.pointId, pos.x, pos.y - radius - 3);
+
+        // Target badge
+        if (isTargetA) {
+            ctx.font = 'bold 7px sans-serif';
+            ctx.fillStyle = '#f97316';
+            ctx.fillText('A ★', pos.x, pos.y + radius + 9);
+        }
+        if (isTargetB) {
+            ctx.font = 'bold 7px sans-serif';
+            ctx.fillStyle = '#a855f7';
+            ctx.fillText('B ★', pos.x, pos.y + radius + 9);
+        }
+    });
+
+    // Draw vehicle
+    const vPos = tx(vehiclePos.pointId);
+    if (vPos) {
+        ctx.beginPath();
+        ctx.arc(vPos.x, vPos.y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = '#ef4444';
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
 }
 
 // Track all orders for staff payment processing
