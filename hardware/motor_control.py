@@ -80,19 +80,19 @@ class ServoMotor:
 
     def forward(self, speed=50):
         self.status = 'forward'
-        self._drive(STOP_VAL - self.drive_speed, STOP_VAL + self.drive_speed)
+        self._drive(STOP_VAL + self.drive_speed, STOP_VAL + self.drive_speed)
 
     def backward(self, speed=50):
         self.status = 'backward'
-        self._drive(STOP_VAL + self.drive_speed, STOP_VAL - self.drive_speed)
+        self._drive(STOP_VAL - self.drive_speed, STOP_VAL - self.drive_speed)
 
     def turn_left(self, speed=50):
         self.status = 'turning_left'
-        self._drive(STOP_VAL + self.turn_speed, STOP_VAL + self.turn_speed)
+        self._drive(STOP_VAL + self.turn_speed, STOP_VAL - self.turn_speed)
 
     def turn_right(self, speed=50):
         self.status = 'turning_right'
-        self._drive(STOP_VAL - self.turn_speed, STOP_VAL - self.turn_speed)
+        self._drive(STOP_VAL - self.turn_speed, STOP_VAL + self.turn_speed)
 
     def stop(self):
         self.status = 'idle'
