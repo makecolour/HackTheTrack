@@ -76,7 +76,7 @@ WantedBy=multi-user.target
 
 $hardwareService = @"
 [Unit]
-Description=TestThisinh Hardware Daemon
+Description=TestThisinh Hardware Daemon (includes camera)
 After=network.target testthisinh-node.service
 Requires=testthisinh-node.service
 
@@ -92,42 +92,24 @@ RestartSec=5
 WantedBy=multi-user.target
 "@
 
-$cameraService = @"
-[Unit]
-Description=Pi Camera MJPEG Stream
-After=network.target
-
-[Service]
-Type=simple
-User=$PiUser
-ExecStart=/usr/bin/rpicam-vid --codec mjpeg -t 0 --nopreview --width 1280 --height 720 --framerate 15 --listen -o tcp://0.0.0.0:8554
-Restart=on-failure
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-"@
-
 # Write service files to temp and copy
 $nodeService | Set-Content "$env:TEMP\testthisinh-node.service" -Encoding UTF8 -NoNewline
 $hardwareService | Set-Content "$env:TEMP\testthisinh-hardware.service" -Encoding UTF8 -NoNewline
-$cameraService | Set-Content "$env:TEMP\testthisinh-camera.service" -Encoding UTF8 -NoNewline
 
-scp "$env:TEMP\testthisinh-node.service" "$env:TEMP\testthisinh-hardware.service" "$env:TEMP\testthisinh-camera.service" "${PiUser}@${PiHost}:/tmp/"
+scp "$env:TEMP\testthisinh-node.service" "$env:TEMP\testthisinh-hardware.service" "${PiUser}@${PiHost}:/tmp/"
 
 ssh "${PiUser}@${PiHost}" @"
+sudo systemctl stop testthisinh-camera 2>/dev/null; sudo systemctl disable testthisinh-camera 2>/dev/null; sudo rm -f /etc/systemd/system/testthisinh-camera.service
 sudo cp /tmp/testthisinh-node.service /etc/systemd/system/
 sudo cp /tmp/testthisinh-hardware.service /etc/systemd/system/
-sudo cp /tmp/testthisinh-camera.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable testthisinh-camera testthisinh-node testthisinh-hardware
-sudo systemctl restart testthisinh-camera testthisinh-node testthisinh-hardware
+sudo systemctl enable testthisinh-node testthisinh-hardware
+sudo systemctl restart testthisinh-node testthisinh-hardware
 "@
 
 Write-Host "`n=== Deployment complete! ===" -ForegroundColor Green
 Write-Host "  Node.js:  http://${PiHost}:3000"
-Write-Host "  Camera:   tcp://${PiHost}:8554"
-Write-Host "  Hardware: http://${PiHost}:8765"
+Write-Host "  Hardware: http://${PiHost}:8765 (camera auto-managed)"
 Write-Host ""
 Write-Host "Check status:"
-Write-Host "  ssh ${PiUser}@${PiHost} 'sudo systemctl status testthisinh-node testthisinh-hardware testthisinh-camera'"
+Write-Host "  ssh ${PiUser}@${PiHost} 'sudo systemctl status testthisinh-node testthisinh-hardware'"

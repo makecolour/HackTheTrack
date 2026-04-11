@@ -432,21 +432,39 @@ function updateVehicleUI() {
 }
 
 // ── Camera Feed ──
+let cameraRetryTimer = null;
 function initCamera() {
-    const HARDWARE_URL = location.protocol + '//' + location.hostname + ':8765';
     const img = document.getElementById('camera-feed');
     const placeholder = document.getElementById('camera-placeholder');
     if (!img) return;
 
-    img.src = `${HARDWARE_URL}/stream`;
-    img.onload = () => {
-        img.classList.remove('hidden');
-        placeholder.classList.add('hidden');
-    };
-    img.onerror = () => {
+    if (cameraRetryTimer) clearTimeout(cameraRetryTimer);
+
+    // Check if stream is available first via snapshot probe
+    fetch('/snapshot').then(resp => {
+        if (resp.ok) {
+            // Camera is available — start MJPEG stream
+            img.src = '/stream';
+            img.classList.remove('hidden');
+            placeholder.classList.add('hidden');
+            img.onerror = () => {
+                img.classList.add('hidden');
+                placeholder.textContent = 'Camera stream interrupted — retrying...';
+                placeholder.classList.remove('hidden');
+                cameraRetryTimer = setTimeout(initCamera, 5000);
+            };
+        } else {
+            img.classList.add('hidden');
+            placeholder.textContent = 'Camera not connected — ensure rpicam-vid is running on Pi';
+            placeholder.classList.remove('hidden');
+            cameraRetryTimer = setTimeout(initCamera, 5000);
+        }
+    }).catch(() => {
         img.classList.add('hidden');
+        placeholder.textContent = 'Hardware daemon not reachable';
         placeholder.classList.remove('hidden');
-    };
+        cameraRetryTimer = setTimeout(initCamera, 5000);
+    });
 }
 
 // ── Map Canvas ──

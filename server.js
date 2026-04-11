@@ -35,6 +35,34 @@ app.get('/health', (_req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// Camera stream proxy — relay MJPEG from hardware daemon so browser only needs port 3000
+app.get('/stream', (req, res) => {
+    const hwUrl = process.env.HARDWARE_URL || 'http://localhost:8765';
+    const url = `${hwUrl}/stream`;
+    const http_ = require('http');
+    const proxy = http_.get(url, (upstream) => {
+        res.writeHead(upstream.statusCode, upstream.headers);
+        upstream.pipe(res);
+    });
+    proxy.on('error', () => {
+        if (!res.headersSent) res.status(502).json({ error: 'Hardware daemon not reachable' });
+    });
+    req.on('close', () => proxy.destroy());
+});
+app.get('/snapshot', (req, res) => {
+    const hwUrl = process.env.HARDWARE_URL || 'http://localhost:8765';
+    const url = `${hwUrl}/snapshot`;
+    const http_ = require('http');
+    const proxy = http_.get(url, (upstream) => {
+        res.writeHead(upstream.statusCode, upstream.headers);
+        upstream.pipe(res);
+    });
+    proxy.on('error', () => {
+        if (!res.headersSent) res.status(502).json({ error: 'Hardware daemon not reachable' });
+    });
+    req.on('close', () => proxy.destroy());
+});
+
 // Socket.IO
 setupSocket(io);
 

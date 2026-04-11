@@ -3,10 +3,7 @@
 Hardware Daemon for SE Preliminary Delivery Bot (Raspberry Pi 5)
 - HTTP API on :8765 for motor control, camera stream, RFID, status
 - Socket.IO client connecting to Node.js backend for real-time events
-
-Start camera on the Pi FIRST:
-  rpicam-vid --codec mjpeg -t 0 --nopreview --width 1280 --height 720 \
-    --framerate 15 --listen -o tcp://0.0.0.0:8554
+- Auto-starts rpicam-vid subprocess for camera (no manual setup needed)
 """
 import asyncio
 import json
@@ -53,6 +50,9 @@ class Daemon:
         self.camera = MJPEGCamera(
             host=cam_cfg.get('host', 'localhost'),
             port=cam_cfg.get('port', 8554),
+            width=cam_cfg.get('width', 1280),
+            height=cam_cfg.get('height', 720),
+            fps=cam_cfg.get('fps', 15),
         )
         self.rfid = None
         self.rfid_scanning = False
@@ -115,6 +115,11 @@ class Daemon:
         return web.json_response({'ok': True, 'status': self.motor.get_status()})
 
     async def handle_stream(self, request):
+        if not self.camera._running or not self.camera.frame:
+            return web.json_response(
+                {'error': 'Camera not connected — start rpicam-vid on port 8554'},
+                status=503
+            )
         response = web.StreamResponse(
             status=200,
             headers={
@@ -223,8 +228,15 @@ class Daemon:
 
     # ── Main ──
     async def run(self):
-        # Start camera
-        await self.camera.start()
+        # Kill any previous daemon still holding our ports
+        await self._kill_stale_ports()
+
+        # Start camera (non-fatal — daemon continues without camera)
+        cam_ok = await self.camera.start()
+        if not cam_ok:
+            logger.warning("Camera not available — daemon will keep running without video")
+            # Start background reconnect loop
+            asyncio.ensure_future(self._camera_reconnect_loop())
 
         # Connect to Node.js backend
         asyncio.ensure_future(self.connect_backend())
@@ -236,8 +248,18 @@ class Daemon:
         app = self.create_app()
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', self.http_port)
-        await site.start()
+        try:
+            site = web.TCPSite(runner, '0.0.0.0', self.http_port)
+            await site.start()
+        except OSError as e:
+            if e.errno == 98:  # EADDRINUSE
+                logger.error(f"Port {self.http_port} in use — killing old process and retrying")
+                await self._kill_stale_ports()
+                await asyncio.sleep(1)
+                site = web.TCPSite(runner, '0.0.0.0', self.http_port)
+                await site.start()
+            else:
+                raise
         logger.info(f"HTTP API on http://0.0.0.0:{self.http_port}")
         logger.info(f"Camera stream: http://0.0.0.0:{self.http_port}/stream")
 
@@ -249,9 +271,51 @@ class Daemon:
             pass
         finally:
             self.motor.cleanup()
+            self.camera.cleanup()
             if self.rfid:
                 self.rfid.cleanup()
             await runner.cleanup()
+
+    async def _kill_stale_ports(self):
+        """Kill any leftover processes on our port (Linux only)."""
+        import subprocess
+        for port in [self.http_port]:
+            try:
+                result = subprocess.run(
+                    ['fuser', '-k', f'{port}/tcp'],
+                    capture_output=True, timeout=5
+                )
+                if result.returncode == 0:
+                    logger.info(f"Killed stale process on port {port}")
+            except FileNotFoundError:
+                # fuser not available, try lsof
+                try:
+                    result = subprocess.run(
+                        ['lsof', '-ti', f':{port}'],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    for pid in result.stdout.strip().split('\n'):
+                        pid = pid.strip()
+                        if pid and pid != str(os.getpid()):
+                            subprocess.run(['kill', '-9', pid], timeout=5)
+                            logger.info(f"Killed stale PID {pid} on port {port}")
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+    async def _camera_reconnect_loop(self):
+        """Keep trying to restart camera subprocess and reconnect."""
+        while True:
+            await asyncio.sleep(10)
+            if self.camera._running:
+                continue
+            logger.info("Attempting camera restart...")
+            self.camera.cleanup()  # Kill any stale rpicam-vid
+            ok = await self.camera.start()  # Re-launches rpicam-vid + reconnects
+            if ok:
+                logger.info("Camera restarted successfully!")
+                break
 
 
 def main():
