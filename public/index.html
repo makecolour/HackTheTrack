@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delivery Bot — SE Preliminary</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-zinc-900 text-white min-h-screen">
+    <div id="app">
+        <!-- Login Screen -->
+        <div id="login-screen" class="flex items-center justify-center min-h-screen">
+            <div class="bg-zinc-800 rounded-2xl p-8 w-full max-w-sm shadow-xl">
+                <h1 class="text-2xl font-bold text-center mb-6">🤖 Delivery Bot</h1>
+                <p class="text-zinc-400 text-center text-sm mb-6">SE Preliminary — Competition Entry</p>
+                <form id="login-form" class="space-y-4">
+                    <input id="login-username" type="text" placeholder="Username" required
+                           class="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-4 py-3 text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none" />
+                    <input id="login-password" type="password" placeholder="Password" required
+                           class="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-4 py-3 text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none" />
+                    <button type="submit"
+                            class="w-full bg-blue-600 hover:bg-blue-500 py-3 rounded-lg font-bold transition-colors">
+                        Login
+                    </button>
+                    <p id="login-error" class="text-red-400 text-sm text-center hidden"></p>
+                </form>
+                <div class="mt-4 text-xs text-zinc-500 text-center">
+                    Default: staff1/1234 or customer1/1234
+                </div>
+            </div>
+        </div>
+
+        <!-- Customer Page -->
+        <div id="customer-page" class="hidden">
+            <nav class="bg-zinc-800 border-b border-zinc-700 px-4 py-3 flex items-center justify-between sticky top-0 z-50">
+                <span class="font-bold">🛒 Order</span>
+                <div class="flex items-center gap-3">
+                    <span id="customer-name" class="text-sm text-zinc-400"></span>
+                    <button onclick="logout()" class="text-xs text-red-400 hover:text-red-300">Logout</button>
+                </div>
+            </nav>
+            <main class="max-w-lg mx-auto p-4">
+                <!-- Destination Selector -->
+                <div class="mb-6">
+                    <label class="block text-sm font-bold text-zinc-400 mb-2">Delivery Destination</label>
+                    <select id="destination-select"
+                            class="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none">
+                        <option value="">Choose destination…</option>
+                    </select>
+                </div>
+
+                <!-- Products -->
+                <div class="mb-6">
+                    <h2 class="text-sm font-bold text-zinc-400 mb-3">Menu</h2>
+                    <div id="product-list" class="space-y-3"></div>
+                </div>
+
+                <!-- Cart Summary -->
+                <div id="cart-summary" class="hidden bg-zinc-800 rounded-xl p-4 mb-4">
+                    <h3 class="font-bold text-sm mb-2">Your Order</h3>
+                    <div id="cart-items" class="space-y-1 text-sm"></div>
+                    <div class="flex justify-between mt-3 pt-2 border-t border-zinc-700 font-bold">
+                        <span>Total</span>
+                        <span id="cart-total">0₫</span>
+                    </div>
+                </div>
+
+                <button id="place-order-btn" onclick="placeOrder()" disabled
+                        class="w-full bg-green-600 hover:bg-green-500 disabled:opacity-30 disabled:cursor-not-allowed py-3 rounded-lg font-bold transition-colors">
+                    Place Order
+                </button>
+
+                <!-- Order Tracking -->
+                <div id="order-tracking" class="hidden mt-6 bg-zinc-800 rounded-xl p-4">
+                    <h3 class="font-bold text-sm mb-2">📦 Order Status</h3>
+                    <div id="order-status-list" class="space-y-2 text-sm"></div>
+                </div>
+            </main>
+        </div>
+
+        <!-- Staff Page -->
+        <div id="staff-page" class="hidden">
+            <nav class="bg-zinc-800 border-b border-zinc-700 px-4 py-3 flex items-center justify-between sticky top-0 z-50">
+                <div class="flex items-center gap-4">
+                    <span class="font-bold">🏗️ Staff Dashboard</span>
+                    <button onclick="showTab('orders')" class="tab-btn text-sm px-3 py-1 rounded-lg bg-zinc-700" data-tab="orders">Orders</button>
+                    <button onclick="showTab('drive')" class="tab-btn text-sm px-3 py-1 rounded-lg" data-tab="drive">Drive</button>
+                    <button onclick="showTab('map')" class="tab-btn text-sm px-3 py-1 rounded-lg" data-tab="map">Map</button>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span id="hw-status" class="text-xs px-2 py-1 rounded-full bg-zinc-700 text-zinc-400">HW: ?</span>
+                    <span id="staff-name" class="text-sm text-zinc-400"></span>
+                    <button onclick="logout()" class="text-xs text-red-400 hover:text-red-300">Logout</button>
+                </div>
+            </nav>
+
+            <!-- Orders Tab -->
+            <div id="tab-orders" class="tab-content max-w-4xl mx-auto p-4">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="font-bold">Pending Orders</h2>
+                    <span id="pending-count" class="text-sm text-zinc-400">0 orders</span>
+                </div>
+                <div id="order-list" class="space-y-3"></div>
+
+                <h2 class="font-bold mt-8 mb-4">All Orders</h2>
+                <div id="all-order-list" class="space-y-2"></div>
+            </div>
+
+            <!-- Drive Tab -->
+            <div id="tab-drive" class="tab-content hidden">
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 p-4">
+                    <!-- Camera Feed -->
+                    <div class="lg:col-span-2">
+                        <div class="bg-zinc-800 rounded-xl overflow-hidden">
+                            <div class="aspect-video bg-black flex items-center justify-center relative">
+                                <img id="camera-feed" class="w-full h-full object-contain hidden" alt="Camera">
+                                <div id="camera-placeholder" class="text-zinc-600 text-sm">
+                                    Camera feed — connect hardware daemon
+                                </div>
+                                <div id="vehicle-info" class="absolute bottom-2 left-2 bg-black/70 text-xs px-2 py-1 rounded">
+                                    Position: <span id="vehicle-position">?</span> | Status: <span id="vehicle-status">idle</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Motor Controls -->
+                        <div class="bg-zinc-800 rounded-xl p-4 mt-4">
+                            <h3 class="text-sm font-bold text-zinc-400 mb-3">Manual Controls</h3>
+                            <div class="grid grid-cols-3 gap-2 max-w-xs mx-auto">
+                                <div></div>
+                                <button onmousedown="motorCmd('forward')" onmouseup="motorCmd('stop')" ontouchstart="motorCmd('forward')" ontouchend="motorCmd('stop')"
+                                        class="bg-zinc-700 hover:bg-zinc-600 active:bg-green-700 rounded-lg py-4 font-bold text-lg transition-colors">▲</button>
+                                <div></div>
+                                <button onmousedown="motorCmd('left')" onmouseup="motorCmd('stop')" ontouchstart="motorCmd('left')" ontouchend="motorCmd('stop')"
+                                        class="bg-zinc-700 hover:bg-zinc-600 active:bg-blue-700 rounded-lg py-4 font-bold text-lg transition-colors">◄</button>
+                                <button onclick="motorCmd('stop')"
+                                        class="bg-red-700 hover:bg-red-600 rounded-lg py-4 font-bold text-sm transition-colors">STOP</button>
+                                <button onmousedown="motorCmd('right')" onmouseup="motorCmd('stop')" ontouchstart="motorCmd('right')" ontouchend="motorCmd('stop')"
+                                        class="bg-zinc-700 hover:bg-zinc-600 active:bg-blue-700 rounded-lg py-4 font-bold text-lg transition-colors">►</button>
+                                <div></div>
+                                <button onmousedown="motorCmd('backward')" onmouseup="motorCmd('stop')" ontouchstart="motorCmd('backward')" ontouchend="motorCmd('stop')"
+                                        class="bg-zinc-700 hover:bg-zinc-600 active:bg-orange-700 rounded-lg py-4 font-bold text-lg transition-colors">▼</button>
+                                <div></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Navigation Panel -->
+                    <div class="space-y-4">
+                        <div class="bg-zinc-800 rounded-xl p-4">
+                            <h3 class="text-sm font-bold text-zinc-400 mb-3">Navigate To</h3>
+                            <div id="nav-buttons" class="grid grid-cols-2 gap-2"></div>
+                            <button onclick="stopNavigation()" class="w-full mt-3 bg-red-700 hover:bg-red-600 py-2 rounded-lg font-bold text-sm transition-colors">
+                                Stop Navigation
+                            </button>
+                        </div>
+
+                        <div class="bg-zinc-800 rounded-xl p-4">
+                            <h3 class="text-sm font-bold text-zinc-400 mb-3">RFID Scanner</h3>
+                            <button onclick="toggleRfid()" id="rfid-btn"
+                                    class="w-full bg-purple-700 hover:bg-purple-600 py-2 rounded-lg font-bold text-sm transition-colors">
+                                Start RFID Scan
+                            </button>
+                            <div id="rfid-result" class="mt-2 text-xs text-zinc-400"></div>
+                        </div>
+
+                        <div class="bg-zinc-800 rounded-xl p-4">
+                            <h3 class="text-sm font-bold text-zinc-400 mb-3">Navigation Log</h3>
+                            <div id="nav-log" class="space-y-1 text-xs max-h-48 overflow-y-auto"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Map Tab -->
+            <div id="tab-map" class="tab-content hidden p-4">
+                <div class="max-w-3xl mx-auto">
+                    <div class="bg-zinc-800 rounded-xl p-4">
+                        <h3 class="text-sm font-bold text-zinc-400 mb-3">Virtual Map</h3>
+                        <canvas id="map-canvas" width="650" height="700" class="w-full bg-zinc-900 rounded-lg"></canvas>
+                    </div>
+                    <div class="flex gap-3 mt-3">
+                        <div class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded-full bg-green-500 inline-block"></span> Start</div>
+                        <div class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded-full bg-blue-500 inline-block"></span> Destination</div>
+                        <div class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded-full bg-yellow-500 inline-block"></span> Intersection</div>
+                        <div class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded-full bg-zinc-500 inline-block"></span> Waypoint</div>
+                        <div class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span> Vehicle</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Payment / Invoice Modal -->
+    <div id="payment-modal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-black/70">
+        <div class="bg-zinc-800 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            <div class="bg-gradient-to-r from-green-700 to-green-600 px-6 py-4">
+                <h2 class="font-bold text-lg">💳 Payment & Invoice</h2>
+            </div>
+            <div id="invoice-body" class="p-6">
+                <!-- Dynamically filled -->
+            </div>
+            <div class="px-6 pb-6 space-y-2">
+                <div class="flex gap-2">
+                    <button onclick="processPayment('cash')" class="flex-1 bg-green-600 hover:bg-green-500 py-2 rounded-lg font-bold text-sm transition-colors">Cash</button>
+                    <button onclick="processPayment('card')" class="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded-lg font-bold text-sm transition-colors">Card</button>
+                    <button onclick="processPayment('momo')" class="flex-1 bg-pink-600 hover:bg-pink-500 py-2 rounded-lg font-bold text-sm transition-colors">MoMo</button>
+                </div>
+                <button onclick="closePaymentModal()" class="w-full bg-zinc-700 hover:bg-zinc-600 py-2 rounded-lg text-sm transition-colors">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Invoice Receipt Modal -->
+    <div id="receipt-modal" class="hidden fixed inset-0 z-[210] flex items-center justify-center bg-black/70">
+        <div class="bg-white text-black rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+            <div id="receipt-content" class="p-6 font-mono text-sm">
+                <!-- Dynamically filled -->
+            </div>
+            <div class="px-6 pb-4">
+                <button onclick="closeReceiptModal()" class="w-full bg-zinc-800 text-white py-2 rounded-lg font-bold text-sm">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>

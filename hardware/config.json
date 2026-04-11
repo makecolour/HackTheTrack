@@ -1,0 +1,23 @@
+{
+    "motor": {
+        "left_pin": 12,
+        "right_pin": 13,
+        "drive_speed": 300,
+        "turn_speed": 200
+    },
+    "rfid": {
+        "bus": 0,
+        "device": 0,
+        "rst_pin": 25,
+        "gpio_chip": 0
+    },
+    "camera": {
+        "host": "localhost",
+        "port": 8554,
+        "width": 1280,
+        "height": 720,
+        "fps": 15
+    },
+    "server_url": "http://localhost:3000",
+    "http_port": 8765
+}

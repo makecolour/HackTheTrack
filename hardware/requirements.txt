@@ -1,0 +1,5 @@
+# Hardware daemon requirements (Raspberry Pi 5)
+lgpio>=0.2.2.0
+spidev>=3.6
+aiohttp>=3.9
+python-socketio[asyncio_client]>=5.11
