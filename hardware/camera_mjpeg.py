@@ -83,6 +83,9 @@ class MJPEGCamera:
             '--width', str(self.width),
             '--height', str(self.height),
             '--framerate', str(self.fps),
+            '--roi', '0,0,1,1',
+            '--autofocus-mode', 'manual',
+            '--lens-position', '0.0',
             '--listen',
             '-o', f'tcp://0.0.0.0:{self.port}',
         ]
