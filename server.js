@@ -79,8 +79,12 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`📡 Socket.IO ready`);
 
     // Auto-start hardware daemon if enabled
-    if (process.env.ENABLE_HARDWARE === 'true') {
+    const hwEnabled = process.env.ENABLE_HARDWARE;
+    console.log(`🤖 ENABLE_HARDWARE=${hwEnabled}`);
+    if (hwEnabled === 'true') {
         spawnHardwareDaemon();
+    } else {
+        console.log('⚠️  Hardware daemon disabled — set ENABLE_HARDWARE=true in .env');
     }
 });
 

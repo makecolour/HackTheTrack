@@ -17,7 +17,7 @@ _EOI = b'\xff\xd9'
 
 
 class MJPEGCamera:
-    def __init__(self, host='localhost', port=8554, width=1280, height=720, fps=15):
+    def __init__(self, host='localhost', port=8554, width=640, height=480, fps=15):
         self.host = host
         self.port = port
         self.width = width
