@@ -231,20 +231,7 @@ class Daemon:
         # Kill any previous daemon still holding our ports
         await self._kill_stale_ports()
 
-        # Start camera (non-fatal — daemon continues without camera)
-        cam_ok = await self.camera.start()
-        if not cam_ok:
-            logger.warning("Camera not available — daemon will keep running without video")
-            # Start background reconnect loop
-            asyncio.ensure_future(self._camera_reconnect_loop())
-
-        # Connect to Node.js backend
-        asyncio.ensure_future(self.connect_backend())
-
-        # Start RFID polling
-        asyncio.ensure_future(self.rfid_loop())
-
-        # Start HTTP server
+        # Start HTTP server FIRST so it's reachable immediately
         app = self.create_app()
         runner = web.AppRunner(app)
         await runner.setup()
@@ -261,7 +248,21 @@ class Daemon:
             else:
                 raise
         logger.info(f"HTTP API on http://0.0.0.0:{self.http_port}")
-        logger.info(f"Camera stream: http://0.0.0.0:{self.http_port}/stream")
+
+        # Start camera (non-fatal — daemon continues without camera)
+        cam_ok = await self.camera.start()
+        if not cam_ok:
+            logger.warning("Camera not available — daemon will keep running without video")
+            # Start background reconnect loop
+            asyncio.ensure_future(self._camera_reconnect_loop())
+        else:
+            logger.info(f"Camera stream: http://0.0.0.0:{self.http_port}/stream")
+
+        # Connect to Node.js backend
+        asyncio.ensure_future(self.connect_backend())
+
+        # Start RFID polling
+        asyncio.ensure_future(self.rfid_loop())
 
         # Run forever
         try:

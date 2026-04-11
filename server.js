@@ -36,32 +36,31 @@ app.get('/health', (_req, res) => {
 });
 
 // Camera stream proxy — relay MJPEG from hardware daemon so browser only needs port 3000
-app.get('/stream', (req, res) => {
-    const hwUrl = process.env.HARDWARE_URL || 'http://localhost:8765';
-    const url = `${hwUrl}/stream`;
+const HW_URL = process.env.HARDWARE_URL || 'http://localhost:8765';
+
+function proxyToHardware(endpoint, req, res, retries = 3) {
     const http_ = require('http');
-    const proxy = http_.get(url, (upstream) => {
-        res.writeHead(upstream.statusCode, upstream.headers);
-        upstream.pipe(res);
-    });
-    proxy.on('error', () => {
-        if (!res.headersSent) res.status(502).json({ error: 'Hardware daemon not reachable' });
-    });
-    req.on('close', () => proxy.destroy());
-});
-app.get('/snapshot', (req, res) => {
-    const hwUrl = process.env.HARDWARE_URL || 'http://localhost:8765';
-    const url = `${hwUrl}/snapshot`;
-    const http_ = require('http');
-    const proxy = http_.get(url, (upstream) => {
-        res.writeHead(upstream.statusCode, upstream.headers);
-        upstream.pipe(res);
-    });
-    proxy.on('error', () => {
-        if (!res.headersSent) res.status(502).json({ error: 'Hardware daemon not reachable' });
-    });
-    req.on('close', () => proxy.destroy());
-});
+    const url = `${HW_URL}${endpoint}`;
+    const attempt = () => {
+        const proxy = http_.get(url, (upstream) => {
+            res.writeHead(upstream.statusCode, upstream.headers);
+            upstream.pipe(res);
+        });
+        proxy.on('error', () => {
+            if (retries > 0 && !res.headersSent) {
+                retries--;
+                setTimeout(attempt, 1000);
+            } else if (!res.headersSent) {
+                res.status(502).json({ error: 'Hardware daemon not reachable' });
+            }
+        });
+        req.on('close', () => proxy.destroy());
+    };
+    attempt();
+}
+
+app.get('/stream', (req, res) => proxyToHardware('/stream', req, res, 5));
+app.get('/snapshot', (req, res) => proxyToHardware('/snapshot', req, res, 3));
 
 // Socket.IO
 setupSocket(io);
