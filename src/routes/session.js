@@ -1,6 +1,7 @@
 const express = require('express');
 const { getDb } = require('../db');
 const orderService = require('../services/orderService');
+const vehicleService = require('../services/vehicleService');
 const aahService = require('../services/allabouthackService');
 
 const router = express.Router();
@@ -104,8 +105,12 @@ function syncMapFromWaypoints(db, waypoints) {
 router.post('/start', (req, res) => {
     const db = getDb();
     db.prepare("UPDATE session_config SET status = 'running', started_at = datetime('now'), updated_at = datetime('now') WHERE id = 1").run();
+    vehicleService.returnToStart();
     const io = req.app.get('io');
-    if (io) io.emit('session-started');
+    if (io) {
+        io.emit('vehicle-position', { pointId: 'S', positionType: 'confirmed' });
+        io.emit('session-started');
+    }
     res.json({ success: true, message: 'Session started' });
 });
 

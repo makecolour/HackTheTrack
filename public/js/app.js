@@ -15,6 +15,7 @@ let keysDown = {};
 let sessionTimer = null;
 let allOrdersCache = [];
 let crossedLines = new Set();
+let driveLocked = true;
 
 const API = '';
 
@@ -162,7 +163,18 @@ function connectSocket() {
     });
     socket.on('session-started', () => {
         showNotification('🏁 Session started!');
+        driveLocked = true;
+        vehiclePos = { pointId: 'S', positionType: 'confirmed' };
+        crossedLines = new Set();
+        currentPath = null;
+        currentOrder = null;
+        updateVehicleUI();
+        renderCurrentOrder();
         loadSessionConfig();
+        loadAllOrders();
+        drawMap();
+        drawMinimap();
+        showTab('orders');
     });
     socket.on('session-ended', () => {
         showNotification('⏹️ Session ended!');
@@ -307,6 +319,8 @@ async function acceptOrder() {
         loadAllOrders();
         if (data.data.path) drawPathOnMap(data.data.path);
         showNotification('✓ Order accepted — delivery starting!');
+        driveLocked = false;
+        showTab('drive');
     }
 }
 
@@ -330,6 +344,10 @@ function renderAllOrders(orders) {
 
 // ── Staff UI: Drive ──
 function motorCmd(command) {
+    if (driveLocked) {
+        showNotification('🔒 Accept an order first to unlock drive!');
+        return;
+    }
     if (socket) socket.emit('motor-control', { command, speed: 50 });
 }
 
