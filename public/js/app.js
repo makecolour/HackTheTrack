@@ -15,7 +15,7 @@ let keysDown = {};
 let sessionTimer = null;
 let allOrdersCache = [];
 let crossedLines = new Set();
-let driveLocked = true;
+let driveLocked = false;
 
 const API = '';
 
@@ -211,6 +211,13 @@ async function loadSessionConfig() {
         sessionConfig = data.data;
         updateSessionUI();
         drawMinimap();
+
+        // Lock drive if session is running and no active order yet
+        if (sessionConfig.status === 'running') {
+            if (!currentOrder || currentOrder.status === 'pending') {
+                driveLocked = true;
+            }
+        }
 
         // Start timer if running
         if (sessionConfig.status === 'running' && sessionConfig.started_at && sessionConfig.run_time_seconds) {
