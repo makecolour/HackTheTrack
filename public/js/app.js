@@ -14,6 +14,7 @@ let sessionConfig = null;
 let keysDown = {};
 let sessionTimer = null;
 let allOrdersCache = [];
+let crossedLines = new Set();
 
 const API = '';
 
@@ -145,8 +146,16 @@ function connectSocket() {
     socket.on('rfid-scanned', (data) => {
         document.getElementById('rfid-result').textContent = `RFID: ${data.uid || data.rfidId || JSON.stringify(data)}`;
     });
+    socket.on('lines-crossed', (data) => {
+        if (data.lines && Array.isArray(data.lines)) {
+            data.lines.forEach(l => crossedLines.add(l.lineKey));
+            drawMap();
+            drawMinimap();
+        }
+    });
     socket.on('session-configured', (data) => {
         showNotification(`Session configured: ${data.targetPointA || '?'} → ${data.targetPointB || '?'}`);
+        crossedLines = new Set();
         loadMapPoints();
         loadSessionConfig();
         loadCurrentOrder();
@@ -179,7 +188,6 @@ async function loadMapPoints() {
     const data = await apiFetch('/api/map/points');
     if (data.success) {
         mapPoints = data.data;
-        populateDestinations();
         drawMap();
         drawMinimap();
     }
@@ -407,19 +415,20 @@ function drawMap() {
 
     ctx.clearRect(0, 0, W, H);
 
-    // Draw connections (roads)
-    ctx.strokeStyle = '#3f3f46';
-    ctx.lineWidth = 3;
-    const drawn = new Set();
+    // Draw connections (roads) — crossed lines shown in green
+    const drawnRoad = new Set();
     mapPoints.forEach(p => {
         const from = tx(p.pointId);
         if (!from) return;
         p.connections.forEach(cId => {
             const key = [p.pointId, cId].sort().join('-');
-            if (drawn.has(key)) return;
-            drawn.add(key);
+            if (drawnRoad.has(key)) return;
+            drawnRoad.add(key);
             const to = tx(cId);
             if (!to) return;
+            const isCrossed = crossedLines.has(key);
+            ctx.strokeStyle = isCrossed ? '#22c55e' : '#3f3f46';
+            ctx.lineWidth = isCrossed ? 5 : 3;
             ctx.beginPath();
             ctx.moveTo(from.x, from.y);
             ctx.lineTo(to.x, to.y);
@@ -629,19 +638,20 @@ function drawMinimap() {
     ctx.fillStyle = 'rgba(24, 24, 27, 0.8)';
     ctx.fillRect(0, 0, W, H);
 
-    // Draw connections
-    ctx.strokeStyle = '#3f3f46';
-    ctx.lineWidth = 2;
-    const drawn = new Set();
+    // Draw connections — crossed lines shown in green
+    const drawnMini = new Set();
     mapPoints.forEach(p => {
         const from = tx(p.pointId);
         if (!from) return;
         (p.connections || []).forEach(cId => {
             const key = [p.pointId, cId].sort().join('-');
-            if (drawn.has(key)) return;
-            drawn.add(key);
+            if (drawnMini.has(key)) return;
+            drawnMini.add(key);
             const to = tx(cId);
             if (!to) return;
+            const isCrossed = crossedLines.has(key);
+            ctx.strokeStyle = isCrossed ? '#22c55e' : '#3f3f46';
+            ctx.lineWidth = isCrossed ? 3 : 2;
             ctx.beginPath();
             ctx.moveTo(from.x, from.y);
             ctx.lineTo(to.x, to.y);

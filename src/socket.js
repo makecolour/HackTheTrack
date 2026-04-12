@@ -151,8 +151,38 @@ function setupSocket(io) {
         socket.on('rfid-scanned', (data) => {
             io.emit('rfid-scanned', data);
             logService.log('rfid_scan', data);
-            // Forward to AllAboutHack
             aahService.send('rfid_scan', data);
+
+            // Match RFID UID to a map point and update position
+            const uid = data.uid || data.rfidId;
+            if (!uid) return;
+            const point = mapService.getPointByRfid(uid);
+            if (!point) return;
+
+            const prevVehicle = vehicleService.getStatus();
+            const prevPoint = prevVehicle ? prevVehicle.current_point : null;
+
+            // Update vehicle position (confirmed via RFID)
+            vehicleService.updatePosition(point.pointId, 'confirmed');
+            io.emit('vehicle-position', { pointId: point.pointId, positionType: 'confirmed' });
+            aahService.send('vehicle_position', { pointId: point.pointId, positionType: 'confirmed' });
+
+            // Detect crossed lines: find path from prev → new and mark all edges
+            if (prevPoint && prevPoint !== point.pointId) {
+                const path = mapService.findPath(prevPoint, point.pointId);
+                if (path && path.length >= 2) {
+                    const lines = [];
+                    for (let i = 0; i < path.length - 1; i++) {
+                        const lineKey = [path[i].pointId, path[i + 1].pointId].sort().join('-');
+                        lines.push({ from: path[i].pointId, to: path[i + 1].pointId, lineKey });
+                    }
+                    io.emit('lines-crossed', { lines });
+                    lines.forEach(line => {
+                        logService.log('line_crossed', line);
+                        aahService.send('line_crossed', line);
+                    });
+                }
+            }
         });
 
         socket.on('disconnect', () => {

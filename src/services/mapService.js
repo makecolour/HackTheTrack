@@ -15,6 +15,12 @@ class MapService {
         return row ? this._mapRow(row) : null;
     }
 
+    getPointByRfid(rfidTagId) {
+        const db = getDb();
+        const row = db.prepare('SELECT * FROM map_points WHERE rfid_tag_id = ?').get(rfidTagId);
+        return row ? this._mapRow(row) : null;
+    }
+
     getDestinations() {
         const db = getDb();
         return db.prepare("SELECT * FROM map_points WHERE type = 'destination'").all().map(this._mapRow);
