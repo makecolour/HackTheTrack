@@ -163,7 +163,6 @@ function connectSocket() {
     });
     socket.on('session-started', () => {
         showNotification('🏁 Session started!');
-        driveLocked = true;
         vehiclePos = { pointId: 'S', positionType: 'confirmed' };
         crossedLines = new Set();
         currentPath = null;
@@ -211,13 +210,6 @@ async function loadSessionConfig() {
         sessionConfig = data.data;
         updateSessionUI();
         drawMinimap();
-
-        // Lock drive if session is running and no active order yet
-        if (sessionConfig.status === 'running') {
-            if (!currentOrder || currentOrder.status === 'pending') {
-                driveLocked = true;
-            }
-        }
 
         // Start timer if running
         if (sessionConfig.status === 'running' && sessionConfig.started_at && sessionConfig.run_time_seconds) {
@@ -355,10 +347,6 @@ function renderAllOrders(orders) {
 
 // ── Staff UI: Drive ──
 function motorCmd(command) {
-    if (driveLocked) {
-        showNotification('🔒 Accept an order first to unlock drive!');
-        return;
-    }
     if (socket) socket.emit('motor-control', { command, speed: 50 });
 }
 

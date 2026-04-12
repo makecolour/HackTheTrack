@@ -2,6 +2,8 @@ const express = require('express');
 const { getDb } = require('../db');
 const orderService = require('../services/orderService');
 const vehicleService = require('../services/vehicleService');
+const mapService = require('../services/mapService');
+const logService = require('../services/logService');
 const aahService = require('../services/allabouthackService');
 
 const router = express.Router();
@@ -111,6 +113,59 @@ router.post('/start', (req, res) => {
         io.emit('vehicle-position', { pointId: 'S', positionType: 'confirmed' });
         io.emit('session-started');
     }
+
+    // ── Auto-accept pending order and dispatch ──
+    const pendingOrder = orderService.getCurrentOrder();
+    if (pendingOrder && pendingOrder.status === 'pending') {
+        const config = db.prepare('SELECT * FROM session_config WHERE id = 1').get();
+
+        // Accept the order
+        orderService.updateStatus(pendingOrder.id, 'accepted');
+        aahService.send('order_status', { orderId: pendingOrder.id, status: 'accepted' });
+
+        // Set to delivering
+        orderService.updateStatus(pendingOrder.id, 'delivering');
+        vehicleService.setDelivering(pendingOrder.id);
+        aahService.send('order_status', { orderId: pendingOrder.id, status: 'delivering' });
+
+        // Compute and post planned_route
+        let fullRoute;
+        const destA = pendingOrder.destination_a;
+        const destB = pendingOrder.destination_b;
+        if (destB) {
+            fullRoute = mapService.findConstrainedPath('S', destA, destB);
+        } else {
+            fullRoute = mapService.findPath('S', destA);
+        }
+
+        if (fullRoute) {
+            aahService.send('planned_route', {
+                route: fullRoute.map(p => p.pointId),
+                startPoint: 'S',
+                viaPoint: destB ? destA : null,
+                endPoint: destB || destA
+            });
+        }
+
+        // Compute path for first leg (S → A) and dispatch navigation
+        const pathToA = mapService.findPath('S', destA);
+        if (pathToA && io) {
+            io.emit('order-accepted', { order: pendingOrder, path: pathToA });
+            io.to('hardware').emit('auto-navigate', {
+                path: pathToA, orderId: pendingOrder.id, isReturn: false
+            });
+
+            aahService.send('navigation_start', { orderId: pendingOrder.id, destination: destA });
+            logService.log('navigation_start', {
+                orderId: pendingOrder.id,
+                destination: destA,
+                path: pathToA.map(p => p.pointId)
+            });
+        }
+
+        console.log(`🚀 Auto-dispatched order #${pendingOrder.id}: S → ${destA}${destB ? ' → ' + destB : ''}`);
+    }
+
     res.json({ success: true, message: 'Session started' });
 });
 

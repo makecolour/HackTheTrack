@@ -88,6 +88,7 @@ function setupSocket(io) {
                         if (newStatus === 'arrived_a' && updated.destination_b) {
                             setTimeout(() => {
                                 orderService.updateStatus(data.orderId, 'delivering');
+                                aahService.send('order_status', { orderId: data.orderId, status: 'delivering' });
                                 const path = mapService.findPath(updated.destination_a, updated.destination_b);
                                 if (path) {
                                     const vehicle = vehicleService.getStatus();
@@ -105,6 +106,7 @@ function setupSocket(io) {
                         else {
                             setTimeout(() => {
                                 orderService.updateStatus(data.orderId, 'returning');
+                                aahService.send('order_status', { orderId: data.orderId, status: 'returning' });
                                 const dest = updated.destination_b || updated.destination_a;
                                 const returnPath = mapService.findPath(dest, 'S');
                                 if (returnPath) {
@@ -201,17 +203,47 @@ function setupSocket(io) {
                     if (currentOrder.destination_b) {
                         setTimeout(() => {
                             orderService.updateStatus(currentOrder.id, 'delivering');
+                            aahService.send('order_status', { orderId: currentOrder.id, status: 'delivering' });
                             const pathToB = mapService.findPath(pid, currentOrder.destination_b);
-                            if (pathToB) io.emit('order-accepted', { order: currentOrder, path: pathToB });
+                            if (pathToB) {
+                                io.emit('order-accepted', { order: currentOrder, path: pathToB });
+                                aahService.send('navigation_start', { orderId: currentOrder.id, destination: currentOrder.destination_b });
+                            }
+                        }, 1000);
+                    } else {
+                        // No B — navigate back to S
+                        setTimeout(() => {
+                            orderService.updateStatus(currentOrder.id, 'returning');
+                            aahService.send('order_status', { orderId: currentOrder.id, status: 'returning' });
+                            const returnPath = mapService.findPath(pid, 'S');
+                            if (returnPath) {
+                                io.to('hardware').emit('auto-navigate', {
+                                    path: returnPath, orderId: currentOrder.id, isReturn: true
+                                });
+                                aahService.send('navigation_start', { orderId: currentOrder.id, destination: 'S', isReturn: true });
+                            }
                         }, 1000);
                     }
                 }
                 // Arrived at destination B
-                else if (currentOrder.destination_b && pid === currentOrder.destination_b && status === 'arrived_a') {
+                else if (currentOrder.destination_b && pid === currentOrder.destination_b && (status === 'arrived_a' || status === 'delivering')) {
                     const updated = orderService.updateStatus(currentOrder.id, 'arrived_b');
                     io.emit('order-arrived', { order: updated, message: `Order #${updated.id} arrived at ${updated.destination_b}` });
                     logService.log('navigation_complete', { orderId: updated.id, destination: pid });
                     aahService.send('order_status', { orderId: updated.id, status: 'arrived_b' });
+
+                    // Navigate back to S
+                    setTimeout(() => {
+                        orderService.updateStatus(currentOrder.id, 'returning');
+                        aahService.send('order_status', { orderId: currentOrder.id, status: 'returning' });
+                        const returnPath = mapService.findPath(pid, 'S');
+                        if (returnPath) {
+                            io.to('hardware').emit('auto-navigate', {
+                                path: returnPath, orderId: currentOrder.id, isReturn: true
+                            });
+                            aahService.send('navigation_start', { orderId: currentOrder.id, destination: 'S', isReturn: true });
+                        }
+                    }, 1000);
                 }
                 // Returned to start — auto-complete the order
                 else if (pid === 'S' && (status === 'arrived_a' || status === 'arrived_b' || status === 'returning')) {
@@ -220,6 +252,7 @@ function setupSocket(io) {
                     io.emit('order-delivered', updated);
                     io.emit('vehicle-returned', { message: 'Vehicle returned to start' });
                     logService.log('order_delivered', { orderId: updated.id });
+                    aahService.send('navigation_complete', { orderId: updated.id, isReturn: true });
                     aahService.send('order_status', { orderId: updated.id, status: 'delivered' });
                 }
             }
