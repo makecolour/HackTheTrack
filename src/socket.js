@@ -183,6 +183,46 @@ function setupSocket(io) {
                     });
                 }
             }
+
+            // ── Auto-progress order based on RFID arrival ──
+            const currentOrder = orderService.getCurrentOrder();
+            if (currentOrder) {
+                const pid = point.pointId;
+                const status = currentOrder.status;
+
+                // Arrived at destination A
+                if (pid === currentOrder.destination_a && (status === 'accepted' || status === 'delivering')) {
+                    const updated = orderService.updateStatus(currentOrder.id, 'arrived_a');
+                    io.emit('order-arrived', { order: updated, message: `Order #${updated.id} arrived at ${updated.destination_a}` });
+                    logService.log('navigation_complete', { orderId: updated.id, destination: pid });
+                    aahService.send('order_status', { orderId: updated.id, status: 'arrived_a' });
+
+                    // If there's a destination B, update status to delivering toward B
+                    if (currentOrder.destination_b) {
+                        setTimeout(() => {
+                            orderService.updateStatus(currentOrder.id, 'delivering');
+                            const pathToB = mapService.findPath(pid, currentOrder.destination_b);
+                            if (pathToB) io.emit('order-accepted', { order: currentOrder, path: pathToB });
+                        }, 1000);
+                    }
+                }
+                // Arrived at destination B
+                else if (currentOrder.destination_b && pid === currentOrder.destination_b && status === 'arrived_a') {
+                    const updated = orderService.updateStatus(currentOrder.id, 'arrived_b');
+                    io.emit('order-arrived', { order: updated, message: `Order #${updated.id} arrived at ${updated.destination_b}` });
+                    logService.log('navigation_complete', { orderId: updated.id, destination: pid });
+                    aahService.send('order_status', { orderId: updated.id, status: 'arrived_b' });
+                }
+                // Returned to start — auto-complete the order
+                else if (pid === 'S' && (status === 'arrived_a' || status === 'arrived_b' || status === 'returning')) {
+                    const updated = orderService.updateStatus(currentOrder.id, 'delivered');
+                    vehicleService.returnToStart();
+                    io.emit('order-delivered', updated);
+                    io.emit('vehicle-returned', { message: 'Vehicle returned to start' });
+                    logService.log('order_delivered', { orderId: updated.id });
+                    aahService.send('order_status', { orderId: updated.id, status: 'delivered' });
+                }
+            }
         });
 
         socket.on('disconnect', () => {
