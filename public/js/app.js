@@ -224,6 +224,10 @@ async function loadCurrentOrder() {
     if (data.success) {
         currentOrder = data.data;
         renderCurrentOrder();
+        // Unlock drive if there's an active order past pending
+        if (currentOrder && currentOrder.status !== 'pending') {
+            driveLocked = false;
+        }
     }
 }
 
