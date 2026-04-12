@@ -55,7 +55,7 @@ class Daemon:
             fps=cam_cfg.get('fps', 15),
         )
         self.rfid = None
-        self.rfid_scanning = False
+        self.rfid_scanning = True
         if RFID_AVAILABLE:
             rfid_cfg = CONFIG.get('rfid', {})
             try:
@@ -210,16 +210,6 @@ class Daemon:
             elif cmd == 'right':    self.motor.turn_right(speed)
             else:                   self.motor.stop()
             await self.sio.emit('motor-status', self.motor.get_status())
-
-        @self.sio.on('rfid-start-scan')
-        async def on_rfid_start(data=None):
-            self.rfid_scanning = True
-            logger.info("RFID scanning started (via backend)")
-
-        @self.sio.on('rfid-stop-scan')
-        async def on_rfid_stop(data=None):
-            self.rfid_scanning = False
-            logger.info("RFID scanning stopped (via backend)")
 
         try:
             await self.sio.connect(self.server_url, transports=['websocket', 'polling'])

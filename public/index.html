@@ -29,64 +29,16 @@
                     <p id="login-error" class="text-red-400 text-sm text-center hidden"></p>
                 </form>
                 <div class="mt-4 text-xs text-zinc-500 text-center">
-                    Default: staff1/1234 or customer1/1234
+                    Default: staff1/1234
                 </div>
             </div>
-        </div>
-
-        <!-- Customer Page -->
-        <div id="customer-page" class="hidden">
-            <nav class="bg-zinc-800 border-b border-zinc-700 px-4 py-3 flex items-center justify-between sticky top-0 z-50">
-                <span class="font-bold">🛒 Order</span>
-                <div class="flex items-center gap-3">
-                    <span id="customer-name" class="text-sm text-zinc-400"></span>
-                    <button onclick="logout()" class="text-xs text-red-400 hover:text-red-300">Logout</button>
-                </div>
-            </nav>
-            <main class="max-w-lg mx-auto p-4">
-                <!-- Destination Selector -->
-                <div class="mb-6">
-                    <label class="block text-sm font-bold text-zinc-400 mb-2">Delivery Destination</label>
-                    <select id="destination-select"
-                            class="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none">
-                        <option value="">Choose destination…</option>
-                    </select>
-                </div>
-
-                <!-- Products -->
-                <div class="mb-6">
-                    <h2 class="text-sm font-bold text-zinc-400 mb-3">Menu</h2>
-                    <div id="product-list" class="space-y-3"></div>
-                </div>
-
-                <!-- Cart Summary -->
-                <div id="cart-summary" class="hidden bg-zinc-800 rounded-xl p-4 mb-4">
-                    <h3 class="font-bold text-sm mb-2">Your Order</h3>
-                    <div id="cart-items" class="space-y-1 text-sm"></div>
-                    <div class="flex justify-between mt-3 pt-2 border-t border-zinc-700 font-bold">
-                        <span>Total</span>
-                        <span id="cart-total">0₫</span>
-                    </div>
-                </div>
-
-                <button id="place-order-btn" onclick="placeOrder()" disabled
-                        class="w-full bg-green-600 hover:bg-green-500 disabled:opacity-30 disabled:cursor-not-allowed py-3 rounded-lg font-bold transition-colors">
-                    Place Order
-                </button>
-
-                <!-- Order Tracking -->
-                <div id="order-tracking" class="hidden mt-6 bg-zinc-800 rounded-xl p-4">
-                    <h3 class="font-bold text-sm mb-2">📦 Order Status</h3>
-                    <div id="order-status-list" class="space-y-2 text-sm"></div>
-                </div>
-            </main>
         </div>
 
         <!-- Staff Page -->
         <div id="staff-page" class="hidden">
             <nav class="bg-zinc-800 border-b border-zinc-700 px-4 py-3 flex items-center justify-between sticky top-0 z-50">
                 <div class="flex items-center gap-4">
-                    <span class="font-bold">🏗️ Staff Dashboard</span>
+                    <span class="font-bold">🤖 Delivery Bot</span>
                     <button onclick="showTab('orders')" class="tab-btn text-sm px-3 py-1 rounded-lg bg-zinc-700" data-tab="orders">Orders</button>
                     <button onclick="showTab('drive')" class="tab-btn text-sm px-3 py-1 rounded-lg" data-tab="drive">Drive</button>
                     <button onclick="showTab('map')" class="tab-btn text-sm px-3 py-1 rounded-lg" data-tab="map">Map</button>
@@ -99,14 +51,47 @@
             </nav>
 
             <!-- Orders Tab -->
-            <div id="tab-orders" class="tab-content max-w-4xl mx-auto p-4">
-                <div class="flex items-center justify-between mb-4">
-                    <h2 class="font-bold">Pending Orders</h2>
-                    <span id="pending-count" class="text-sm text-zinc-400">0 orders</span>
+            <div id="tab-orders" class="tab-content max-w-2xl mx-auto p-4">
+                <!-- Session Info -->
+                <div id="session-info" class="bg-zinc-800 rounded-xl p-4 mb-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <h2 class="font-bold">Session</h2>
+                        <span id="session-status-badge" class="text-xs px-2 py-1 rounded-full bg-zinc-700 text-zinc-400">idle</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 text-sm text-zinc-400">
+                        <div>Team: <span id="session-team" class="text-white">—</span></div>
+                        <div>Phase: <span id="session-phase" class="text-white">—</span></div>
+                        <div>Target A: <span id="session-target-a" class="text-yellow-400">—</span></div>
+                        <div>Target B: <span id="session-target-b" class="text-yellow-400">—</span></div>
+                        <div>Time: <span id="session-timer" class="text-white font-mono">--:--</span></div>
+                    </div>
                 </div>
-                <div id="order-list" class="space-y-3"></div>
 
-                <h2 class="font-bold mt-8 mb-4">All Orders</h2>
+                <!-- Current Order -->
+                <div id="current-order" class="hidden bg-zinc-800 rounded-xl p-4 mb-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="font-bold">📦 Current Order</h3>
+                        <span id="order-status-badge" class="text-xs px-2 py-1 rounded-full bg-yellow-600">pending</span>
+                    </div>
+                    <div class="text-sm space-y-1 mb-3">
+                        <div>Destination A: <span id="order-dest-a" class="text-yellow-400 font-bold"></span></div>
+                        <div>Destination B: <span id="order-dest-b" class="text-yellow-400 font-bold"></span></div>
+                    </div>
+                    <button id="accept-order-btn" onclick="acceptOrder()"
+                            class="w-full bg-green-600 hover:bg-green-500 py-2.5 rounded-lg font-bold transition-colors">
+                        ✓ Accept & Start Delivery
+                    </button>
+                </div>
+
+                <!-- No order state -->
+                <div id="no-order" class="bg-zinc-800 rounded-xl p-8 text-center text-zinc-500">
+                    <p class="text-lg mb-2">⏳</p>
+                    <p>Waiting for order from AllAboutHack…</p>
+                    <p class="text-xs mt-1">The organizer will push an order when the session starts.</p>
+                </div>
+
+                <!-- Order History -->
+                <h2 class="font-bold mt-6 mb-3">Order History</h2>
                 <div id="all-order-list" class="space-y-2"></div>
             </div>
 
@@ -163,10 +148,10 @@
                     <div id="drive-sidebar" class="absolute top-2 right-2 z-10 space-y-2" style="width: 220px;">
                         <div class="bg-black/60 backdrop-blur rounded-xl p-3">
                             <h3 class="text-xs font-bold text-zinc-400 mb-2">RFID Scanner</h3>
-                            <button onclick="toggleRfid()" id="rfid-btn"
-                                    class="w-full bg-purple-700/80 hover:bg-purple-600 py-1.5 rounded-lg font-bold text-xs transition-colors">
-                                Start RFID Scan
-                            </button>
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                                <span class="text-[10px] text-green-400">Always Active</span>
+                            </div>
                             <div id="rfid-result" class="mt-1 text-[10px] text-zinc-400"></div>
                         </div>
                         <div class="bg-black/60 backdrop-blur rounded-xl p-3">
@@ -192,38 +177,6 @@
                         <div class="flex items-center gap-1 text-xs"><span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span> Vehicle</div>
                     </div>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Payment / Invoice Modal -->
-    <div id="payment-modal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-black/70">
-        <div class="bg-zinc-800 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
-            <div class="bg-gradient-to-r from-green-700 to-green-600 px-6 py-4">
-                <h2 class="font-bold text-lg">💳 Payment & Invoice</h2>
-            </div>
-            <div id="invoice-body" class="p-6">
-                <!-- Dynamically filled -->
-            </div>
-            <div class="px-6 pb-6 space-y-2">
-                <div class="flex gap-2">
-                    <button onclick="processPayment('cash')" class="flex-1 bg-green-600 hover:bg-green-500 py-2 rounded-lg font-bold text-sm transition-colors">Cash</button>
-                    <button onclick="processPayment('card')" class="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded-lg font-bold text-sm transition-colors">Card</button>
-                    <button onclick="processPayment('momo')" class="flex-1 bg-pink-600 hover:bg-pink-500 py-2 rounded-lg font-bold text-sm transition-colors">MoMo</button>
-                </div>
-                <button onclick="closePaymentModal()" class="w-full bg-zinc-700 hover:bg-zinc-600 py-2 rounded-lg text-sm transition-colors">Close</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Invoice Receipt Modal -->
-    <div id="receipt-modal" class="hidden fixed inset-0 z-[210] flex items-center justify-center bg-black/70">
-        <div class="bg-white text-black rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
-            <div id="receipt-content" class="p-6 font-mono text-sm">
-                <!-- Dynamically filled -->
-            </div>
-            <div class="px-6 pb-4">
-                <button onclick="closeReceiptModal()" class="w-full bg-zinc-800 text-white py-2 rounded-lg font-bold text-sm">Close</button>
             </div>
         </div>
     </div>

@@ -1,5 +1,7 @@
 const express = require('express');
 const { getDb } = require('../db');
+const orderService = require('../services/orderService');
+const aahService = require('../services/allabouthackService');
 
 const router = express.Router();
 
@@ -49,6 +51,17 @@ router.post('/configure', (req, res) => {
         syncMapFromWaypoints(db, waypoints);
     }
 
+    // Auto-create order from target destinations
+    if (ptA) {
+        // Clear any previous orders
+        db.prepare("UPDATE orders SET status = 'cancelled', updated_at = datetime('now') WHERE status NOT IN ('delivered','cancelled')").run();
+        const order = orderService.createFromBackend({
+            destinationA: ptA, destinationB: ptB,
+            sessionId: sessId
+        });
+        console.log(`📦 Order #${order.id} created: ${ptA} → ${ptB || 'return'}`);
+    }
+
     const io = req.app.get('io');
     if (io) io.emit('session-configured', {
         competitionSessionId: sessId, targetPointA: ptA, targetPointB: ptB,
@@ -96,16 +109,15 @@ router.post('/start', (req, res) => {
     res.json({ success: true, message: 'Session started' });
 });
 
-// POST /api/session/end — end the run, trigger log sync
-router.post('/end', async (req, res) => {
+// POST /api/session/end — end the run
+router.post('/end', (req, res) => {
     const db = getDb();
     db.prepare("UPDATE session_config SET status = 'ended', updated_at = datetime('now') WHERE id = 1").run();
     const io = req.app.get('io');
     if (io) io.emit('session-ended');
 
-    // Sync logs back to AllAboutHack
-    const syncService = require('../services/syncService');
-    syncService.syncLogs().catch(err => console.error('Log sync failed:', err.message));
+    // Flush remaining logs to AllAboutHack
+    aahService.flushAll().catch(err => console.error('Final flush failed:', err.message));
 
     res.json({ success: true, message: 'Session ended' });
 });
@@ -117,17 +129,6 @@ router.post('/reset', (req, res) => {
     const io = req.app.get('io');
     if (io) io.emit('session-reset');
     res.json({ success: true, message: 'Session reset' });
-});
-
-// POST /api/session/sync-logs — manual log sync trigger
-router.post('/sync-logs', async (req, res) => {
-    const syncService = require('../services/syncService');
-    try {
-        const result = await syncService.syncLogs();
-        res.json({ success: true, data: result });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
-    }
 });
 
 module.exports = router;

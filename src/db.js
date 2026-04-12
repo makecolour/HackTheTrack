@@ -30,7 +30,7 @@ function initialize() {
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             display_name TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('staff','customer')),
+            role TEXT NOT NULL CHECK(role IN ('staff')),
             created_at TEXT DEFAULT (datetime('now'))
         );
 
@@ -44,44 +44,18 @@ function initialize() {
             rfid_tag_id TEXT
         );
 
-        CREATE TABLE IF NOT EXISTS products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            price REAL NOT NULL DEFAULT 0,
-            description TEXT,
-            image TEXT,
-            available INTEGER NOT NULL DEFAULT 1
-        );
-
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_id INTEGER,
-            customer_name TEXT,
-            destination_point TEXT NOT NULL,
-            via_point TEXT,
+            destination_a TEXT NOT NULL,
+            destination_b TEXT,
             status TEXT NOT NULL DEFAULT 'pending'
-                CHECK(status IN ('pending','confirmed','delivering','arrived','delivered','cancelled')),
+                CHECK(status IN ('pending','accepted','delivering','arrived_a','arrived_b','delivered','returning','cancelled')),
             vehicle_status TEXT DEFAULT 'idle'
                 CHECK(vehicle_status IN ('idle','moving','arrived')),
             note TEXT,
-            total_price REAL DEFAULT 0,
-            batch_id TEXT,
-            batch_order INTEGER,
-            confirmed_by INTEGER,
+            session_id INTEGER,
             created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (customer_id) REFERENCES users(id),
-            FOREIGN KEY (confirmed_by) REFERENCES users(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS order_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            order_id INTEGER NOT NULL,
-            product_id INTEGER,
-            name TEXT NOT NULL,
-            price REAL NOT NULL DEFAULT 0,
-            quantity INTEGER NOT NULL DEFAULT 1,
-            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+            updated_at TEXT DEFAULT (datetime('now'))
         );
 
         CREATE TABLE IF NOT EXISTS vehicle (
@@ -146,8 +120,6 @@ function initialize() {
         const hash = bcrypt.hashSync('1234', 10);
         insert.run('staff1', hash, 'Staff 01', 'staff');
         insert.run('staff2', hash, 'Staff 02', 'staff');
-        insert.run('customer1', hash, 'Khách 01', 'customer');
-        insert.run('customer2', hash, 'Khách 02', 'customer');
         console.log('👤 Default users seeded (password: 1234)');
     }
 
@@ -156,17 +128,6 @@ function initialize() {
     if (mapCount === 0) {
         seedDemoMap(db);
         console.log('🗺️  Demo map seeded');
-    }
-
-    // Seed products if empty
-    const prodCount = db.prepare('SELECT COUNT(*) as c FROM products').get().c;
-    if (prodCount === 0) {
-        const ins = db.prepare('INSERT INTO products (name, price, description) VALUES (?, ?, ?)');
-        ins.run('Nước suối', 5000, 'Chai nước suối 500ml');
-        ins.run('Trà đá', 3000, 'Ly trà đá');
-        ins.run('Cà phê', 15000, 'Cà phê sữa đá');
-        ins.run('Bánh mì', 20000, 'Bánh mì thịt');
-        console.log('📦 Products seeded');
     }
 
     console.log('✅ Database initialized');

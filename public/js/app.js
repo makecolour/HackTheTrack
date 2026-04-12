@@ -1,6 +1,6 @@
 /**
  * Delivery Bot — SE Preliminary Frontend
- * Single-page app with role-based views (Customer / Staff)
+ * Competitor interface (staff role only — order pushed from AllAboutHack)
  */
 
 // ── State ──
@@ -8,13 +8,12 @@ let token = localStorage.getItem('token');
 let currentUser = null;
 let socket = null;
 let mapPoints = [];
-let products = [];
-let cart = {};
-let myOrders = [];
-let rfidScanning = false;
+let currentOrder = null;
 let vehiclePos = { pointId: 'S', positionType: 'unknown' };
 let sessionConfig = null;
 let keysDown = {};
+let sessionTimer = null;
+let allOrdersCache = [];
 
 const API = '';
 
@@ -78,18 +77,12 @@ function enterApp() {
     connectSocket();
     loadMapPoints();
 
-    if (currentUser.role === 'customer') {
-        document.getElementById('customer-page').classList.remove('hidden');
-        document.getElementById('customer-name').textContent = currentUser.displayName || currentUser.username;
-        loadProducts();
-        loadMyOrders();
-    } else {
-        document.getElementById('staff-page').classList.remove('hidden');
-        document.getElementById('staff-name').textContent = currentUser.displayName || currentUser.username;
-        loadAllOrders();
-        loadSessionConfig();
-        showTab('orders');
-    }
+    document.getElementById('staff-page').classList.remove('hidden');
+    document.getElementById('staff-name').textContent = currentUser.displayName || currentUser.username;
+    loadCurrentOrder();
+    loadAllOrders();
+    loadSessionConfig();
+    showTab('orders');
 }
 
 // ── Socket.IO ──
@@ -98,31 +91,33 @@ function connectSocket() {
 
     socket.on('connect', () => {
         console.log('Socket connected');
-        if (currentUser.role === 'staff') {
-            socket.emit('join-room', 'staff');
-        } else {
-            socket.emit('join-room', 'customer');
-            socket.emit('join-customer', currentUser.id);
-        }
+        socket.emit('join-room', 'staff');
     });
 
     // Real-time events
-    socket.on('new-order', () => { if (currentUser.role === 'staff') loadAllOrders(); });
-    socket.on('order-confirmed', (data) => {
-        if (currentUser.role === 'staff') loadAllOrders();
-        if (currentUser.role === 'customer') loadMyOrders();
+    socket.on('new-order', (order) => {
+        currentOrder = order;
+        renderCurrentOrder();
+        loadAllOrders();
+        showNotification('📦 New order received from AllAboutHack!');
+    });
+    socket.on('order-accepted', (data) => {
+        loadAllOrders();
         if (data.path) drawPathOnMap(data.path);
     });
     socket.on('order-arrived', (data) => {
-        if (currentUser.role === 'customer') {
-            loadMyOrders();
-            showNotification(`Order #${data.order.id} arrived at ${data.order.destination_point}!`);
+        if (data.order) {
+            currentOrder = data.order;
+            renderCurrentOrder();
         }
-        if (currentUser.role === 'staff') loadAllOrders();
+        loadAllOrders();
+        showNotification(data.message || 'Order arrived!');
     });
-    socket.on('order-delivered', () => {
-        if (currentUser.role === 'staff') loadAllOrders();
-        if (currentUser.role === 'customer') loadMyOrders();
+    socket.on('order-delivered', (order) => {
+        currentOrder = order;
+        renderCurrentOrder();
+        loadAllOrders();
+        showNotification(`Order #${order.id} delivered!`);
     });
     socket.on('vehicle-position', (data) => {
         vehiclePos = data;
@@ -131,7 +126,6 @@ function connectSocket() {
         drawMinimap();
     });
     socket.on('vehicle-position-estimate', (data) => {
-        // Interpolated position for smooth map rendering
         if (data.x !== undefined) drawVehicleEstimate(data.x, data.y);
     });
     socket.on('vehicle-returned', () => {
@@ -153,15 +147,23 @@ function connectSocket() {
     });
     socket.on('session-configured', (data) => {
         showNotification(`Session configured: ${data.targetPointA || '?'} → ${data.targetPointB || '?'}`);
-        loadMapPoints(); // Reload map points after sync
-        loadSessionConfig(); // Update minimap targets
+        loadMapPoints();
+        loadSessionConfig();
+        loadCurrentOrder();
     });
-    socket.on('payment-confirmed', (data) => {
-        showNotification(`Payment confirmed for order #${data.orderId}`);
-        if (currentUser.role === 'staff') loadAllOrders();
+    socket.on('session-started', () => {
+        showNotification('🏁 Session started!');
+        loadSessionConfig();
     });
-    socket.on('invoice-ready', (invoice) => {
-        showReceiptModal(invoice);
+    socket.on('session-ended', () => {
+        showNotification('⏹️ Session ended!');
+        if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
+        loadSessionConfig();
+    });
+    socket.on('order-cancelled', () => {
+        currentOrder = null;
+        renderCurrentOrder();
+        loadAllOrders();
     });
 }
 
@@ -187,181 +189,123 @@ async function loadSessionConfig() {
     const data = await apiFetch('/api/session');
     if (data.success && data.data) {
         sessionConfig = data.data;
+        updateSessionUI();
         drawMinimap();
+
+        // Start timer if running
+        if (sessionConfig.status === 'running' && sessionConfig.started_at && sessionConfig.run_time_seconds) {
+            startSessionTimer();
+        }
     }
 }
 
-async function loadProducts() {
-    const data = await apiFetch('/api/products');
+async function loadCurrentOrder() {
+    const data = await apiFetch('/api/orders/current');
     if (data.success) {
-        products = data.data;
-        renderProducts();
-    }
-}
-
-async function loadMyOrders() {
-    const data = await apiFetch('/api/orders/my');
-    if (data.success) {
-        myOrders = data.data;
-        renderMyOrders();
+        currentOrder = data.data;
+        renderCurrentOrder();
     }
 }
 
 async function loadAllOrders() {
-    const [pending, all] = await Promise.all([
-        apiFetch('/api/orders/pending'),
-        apiFetch('/api/orders')
-    ]);
-    if (pending.success) renderPendingOrders(pending.data);
-    if (all.success) {
-        allOrdersCache = all.data;
-        renderAllOrders(all.data);
-    }
-}
-
-// ── Customer UI ──
-function populateDestinations() {
-    const sel = document.getElementById('destination-select');
-    if (!sel) return;
-    const destinations = mapPoints.filter(p => p.type === 'destination');
-    destinations.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p.pointId;
-        opt.textContent = `${p.pointId} — ${p.label}`;
-        sel.appendChild(opt);
-    });
-}
-
-function renderProducts() {
-    const container = document.getElementById('product-list');
-    if (!container) return;
-    container.innerHTML = products.map(p => `
-        <div class="bg-zinc-800 rounded-lg p-3 flex items-center justify-between">
-            <div>
-                <div class="font-bold text-sm">${escapeHtml(p.name)}</div>
-                <div class="text-xs text-zinc-400">${escapeHtml(p.description || '')}</div>
-                <div class="text-green-400 text-sm font-bold">${formatPrice(p.price)}</div>
-            </div>
-            <div class="flex items-center gap-2">
-                <button onclick="changeQty(${p.id}, -1)" class="bg-zinc-700 hover:bg-zinc-600 w-8 h-8 rounded-lg font-bold">−</button>
-                <span id="qty-${p.id}" class="w-8 text-center font-mono">${cart[p.id] || 0}</span>
-                <button onclick="changeQty(${p.id}, 1)" class="bg-zinc-700 hover:bg-zinc-600 w-8 h-8 rounded-lg font-bold">+</button>
-            </div>
-        </div>
-    `).join('');
-}
-
-function changeQty(productId, delta) {
-    cart[productId] = Math.max(0, (cart[productId] || 0) + delta);
-    document.getElementById(`qty-${productId}`).textContent = cart[productId];
-    updateCartSummary();
-}
-
-function updateCartSummary() {
-    const hasItems = Object.values(cart).some(q => q > 0);
-    const summaryEl = document.getElementById('cart-summary');
-    const btnEl = document.getElementById('place-order-btn');
-    const dest = document.getElementById('destination-select').value;
-
-    summaryEl.classList.toggle('hidden', !hasItems);
-    btnEl.disabled = !hasItems || !dest;
-
-    if (!hasItems) return;
-
-    const itemsEl = document.getElementById('cart-items');
-    let total = 0;
-    itemsEl.innerHTML = '';
-    for (const [pid, qty] of Object.entries(cart)) {
-        if (qty <= 0) continue;
-        const prod = products.find(p => p.id === Number(pid));
-        if (!prod) continue;
-        const subtotal = prod.price * qty;
-        total += subtotal;
-        itemsEl.innerHTML += `<div class="flex justify-between text-zinc-300"><span>${escapeHtml(prod.name)} x${qty}</span><span>${formatPrice(subtotal)}</span></div>`;
-    }
-    document.getElementById('cart-total').textContent = formatPrice(total);
-}
-
-// Listen for destination change
-document.addEventListener('change', (e) => {
-    if (e.target.id === 'destination-select') updateCartSummary();
-});
-
-async function placeOrder() {
-    const dest = document.getElementById('destination-select').value;
-    if (!dest) return;
-    const items = [];
-    for (const [pid, qty] of Object.entries(cart)) {
-        if (qty <= 0) continue;
-        const prod = products.find(p => p.id === Number(pid));
-        if (prod) items.push({ productId: prod.id, name: prod.name, price: prod.price, quantity: qty });
-    }
-    if (items.length === 0) return;
-
-    const data = await apiFetch('/api/orders', {
-        method: 'POST',
-        body: JSON.stringify({ items, destinationPoint: dest })
-    });
-
+    const data = await apiFetch('/api/orders');
     if (data.success) {
-        cart = {};
-        renderProducts();
-        updateCartSummary();
-        loadMyOrders();
-        showNotification('Order placed!');
+        allOrdersCache = data.data;
+        renderAllOrders(data.data);
     }
 }
 
-function renderMyOrders() {
-    const container = document.getElementById('order-tracking');
-    const list = document.getElementById('order-status-list');
-    if (!list || myOrders.length === 0) {
-        if (container) container.classList.add('hidden');
+// ── Session UI ──
+function updateSessionUI() {
+    if (!sessionConfig) return;
+    const badge = document.getElementById('session-status-badge');
+    const statusColors = {
+        idle: 'bg-zinc-700 text-zinc-400',
+        configured: 'bg-yellow-900 text-yellow-300',
+        running: 'bg-green-900 text-green-300',
+        ended: 'bg-red-900 text-red-300'
+    };
+    badge.textContent = sessionConfig.status || 'idle';
+    badge.className = `text-xs px-2 py-1 rounded-full ${statusColors[sessionConfig.status] || statusColors.idle}`;
+
+    const team = document.getElementById('session-team');
+    const phase = document.getElementById('session-phase');
+    const targetA = document.getElementById('session-target-a');
+    const targetB = document.getElementById('session-target-b');
+    if (team) team.textContent = sessionConfig.team_code || '—';
+    if (phase) phase.textContent = sessionConfig.phase || '—';
+    if (targetA) targetA.textContent = sessionConfig.target_point_a || '—';
+    if (targetB) targetB.textContent = sessionConfig.target_point_b || '—';
+}
+
+function startSessionTimer() {
+    if (sessionTimer) clearInterval(sessionTimer);
+    const timerEl = document.getElementById('session-timer');
+    if (!timerEl || !sessionConfig) return;
+
+    const startTime = new Date(sessionConfig.started_at).getTime();
+    const duration = (sessionConfig.run_time_seconds || 300) * 1000;
+
+    sessionTimer = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const remaining = Math.max(0, duration - elapsed);
+        const mins = Math.floor(remaining / 60000);
+        const secs = Math.floor((remaining % 60000) / 1000);
+        timerEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        if (remaining <= 0) {
+            clearInterval(sessionTimer);
+            sessionTimer = null;
+            timerEl.textContent = '00:00';
+        }
+    }, 1000);
+}
+
+// ── Order UI ──
+function renderCurrentOrder() {
+    const orderEl = document.getElementById('current-order');
+    const noOrderEl = document.getElementById('no-order');
+    const acceptBtn = document.getElementById('accept-order-btn');
+
+    if (!currentOrder || currentOrder.status === 'delivered' || currentOrder.status === 'cancelled') {
+        orderEl.classList.add('hidden');
+        noOrderEl.classList.remove('hidden');
         return;
     }
-    container.classList.remove('hidden');
-    list.innerHTML = myOrders.slice(0, 10).map(o => `
-        <div class="flex items-center justify-between bg-zinc-700 rounded-lg px-3 py-2">
-            <div>
-                <span class="font-mono text-xs">#${o.id}</span>
-                <span class="ml-2">${escapeHtml(o.destination_point)}</span>
-            </div>
-            <span class="text-xs px-2 py-0.5 rounded-full ${statusColor(o.status)}">${o.status}</span>
-            ${o.status === 'arrived' ? `<button onclick="confirmReceipt(${o.id})" class="ml-2 bg-green-600 hover:bg-green-500 px-3 py-1 rounded text-xs font-bold">Received</button>` : ''}
-        </div>
-    `).join('');
+
+    orderEl.classList.remove('hidden');
+    noOrderEl.classList.add('hidden');
+
+    document.getElementById('order-dest-a').textContent = currentOrder.destination_a || '—';
+    document.getElementById('order-dest-b').textContent = currentOrder.destination_b || '(return only)';
+
+    const badge = document.getElementById('order-status-badge');
+    badge.textContent = currentOrder.status;
+    badge.className = `text-xs px-2 py-1 rounded-full ${statusColor(currentOrder.status)}`;
+
+    // Show accept button only when pending
+    if (currentOrder.status === 'pending') {
+        acceptBtn.classList.remove('hidden');
+    } else {
+        acceptBtn.classList.add('hidden');
+    }
 }
 
-async function confirmReceipt(orderId) {
-    await apiFetch(`/api/orders/${orderId}/customer-confirm`, { method: 'PUT' });
-    loadMyOrders();
-    // Show payment modal
-    openPaymentModal(orderId);
+async function acceptOrder() {
+    if (!currentOrder) return;
+    const data = await apiFetch(`/api/orders/${currentOrder.id}/accept`, { method: 'PUT' });
+    if (data.success) {
+        currentOrder = data.data.order;
+        renderCurrentOrder();
+        loadAllOrders();
+        if (data.data.path) drawPathOnMap(data.data.path);
+        showNotification('✓ Order accepted — delivery starting!');
+    }
 }
 
-// ── Staff UI: Orders ──
-function renderPendingOrders(orders) {
-    document.getElementById('pending-count').textContent = `${orders.length} order${orders.length !== 1 ? 's' : ''}`;
-    const container = document.getElementById('order-list');
-    if (!container) return;
-    container.innerHTML = orders.map(o => `
-        <div class="bg-zinc-800 rounded-xl p-4">
-            <div class="flex items-center justify-between mb-2">
-                <span class="font-mono text-sm">#${o.id}</span>
-                <span class="text-xs text-zinc-400">${o.customer_name || 'Guest'}</span>
-            </div>
-            <div class="text-sm mb-1">→ <strong>${escapeHtml(o.destination_point)}</strong></div>
-            <div class="text-xs text-zinc-400 mb-2">${(o.items || []).map(i => `${escapeHtml(i.name)} x${i.quantity}`).join(', ')}</div>
-            <div class="flex gap-2">
-                <button onclick="confirmOrder(${o.id})" class="flex-1 bg-green-600 hover:bg-green-500 py-2 rounded-lg font-bold text-sm transition-colors">
-                    Confirm & Deliver
-                </button>
-                <button onclick="cancelOrder(${o.id})" class="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-lg text-sm transition-colors">
-                    Cancel
-                </button>
-            </div>
-        </div>
-    `).join('') || '<div class="text-zinc-500 text-sm text-center py-4">No pending orders</div>';
+async function cancelOrder(id) {
+    await apiFetch(`/api/orders/${id}/cancel`, { method: 'PUT' });
+    loadCurrentOrder();
+    loadAllOrders();
 }
 
 function renderAllOrders(orders) {
@@ -370,22 +314,10 @@ function renderAllOrders(orders) {
     container.innerHTML = orders.slice(0, 20).map(o => `
         <div class="flex items-center justify-between bg-zinc-800 rounded-lg px-4 py-2 text-sm">
             <span class="font-mono">#${o.id}</span>
-            <span>${escapeHtml(o.destination_point)}</span>
-            <span class="text-xs">${o.customer_name || '-'}</span>
+            <span>${escapeHtml(o.destination_a)}${o.destination_b ? ' → ' + escapeHtml(o.destination_b) : ''}</span>
             <span class="px-2 py-0.5 rounded-full text-xs ${statusColor(o.status)}">${o.status}</span>
-            ${o.status === 'delivered' ? `<button onclick="openPaymentModal(${o.id})" class="bg-green-700 hover:bg-green-600 px-3 py-1 rounded text-xs font-bold">💳 Pay</button>` : ''}
         </div>
-    `).join('');
-}
-
-async function confirmOrder(id) {
-    await apiFetch(`/api/orders/${id}/confirm`, { method: 'PUT' });
-    loadAllOrders();
-}
-
-async function cancelOrder(id) {
-    await apiFetch(`/api/orders/${id}/cancel`, { method: 'PUT' });
-    loadAllOrders();
+    `).join('') || '<div class="text-zinc-500 text-sm text-center py-4">No orders yet</div>';
 }
 
 // ── Staff UI: Drive ──
@@ -396,12 +328,6 @@ function motorCmd(command) {
 function stopNavigation() {
     if (socket) socket.emit('stop-navigation');
     addNavLog({ message: 'Navigation stopped' });
-}
-
-function toggleRfid() {
-    rfidScanning = !rfidScanning;
-    if (socket) socket.emit(rfidScanning ? 'rfid-start-scan' : 'rfid-stop-scan');
-    document.getElementById('rfid-btn').textContent = rfidScanning ? 'Stop RFID Scan' : 'Start RFID Scan';
 }
 
 function addNavLog(data) {
@@ -600,17 +526,15 @@ function showTab(tabName) {
 function statusColor(status) {
     const colors = {
         pending: 'bg-yellow-900 text-yellow-300',
-        confirmed: 'bg-blue-900 text-blue-300',
+        accepted: 'bg-blue-900 text-blue-300',
         delivering: 'bg-purple-900 text-purple-300',
-        arrived: 'bg-green-900 text-green-300',
+        arrived_a: 'bg-green-900 text-green-300',
+        arrived_b: 'bg-green-900 text-green-300',
+        returning: 'bg-orange-900 text-orange-300',
         delivered: 'bg-zinc-700 text-zinc-300',
         cancelled: 'bg-red-900 text-red-300'
     };
     return colors[status] || 'bg-zinc-700 text-zinc-300';
-}
-
-function formatPrice(price) {
-    return new Intl.NumberFormat('vi-VN').format(price) + '₫';
 }
 
 function escapeHtml(str) {
@@ -625,113 +549,6 @@ function showNotification(message) {
     el.textContent = message;
     document.body.appendChild(el);
     setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 3000);
-}
-
-// ── Payment & Invoice ──
-let paymentOrderId = null;
-
-function openPaymentModal(orderId) {
-    paymentOrderId = orderId;
-    const order = myOrders.find(o => o.id === orderId) || allOrdersCache.find(o => o.id === orderId);
-    const body = document.getElementById('invoice-body');
-    if (!order) {
-        body.innerHTML = '<p class="text-zinc-400">Order not found</p>';
-    } else {
-        body.innerHTML = `
-            <div class="space-y-3">
-                <div class="flex justify-between text-sm">
-                    <span class="text-zinc-400">Order</span>
-                    <span class="font-mono font-bold">#${order.id}</span>
-                </div>
-                <div class="flex justify-between text-sm">
-                    <span class="text-zinc-400">Customer</span>
-                    <span>${escapeHtml(order.customer_name || 'Guest')}</span>
-                </div>
-                <div class="flex justify-between text-sm">
-                    <span class="text-zinc-400">Destination</span>
-                    <span class="font-bold">${escapeHtml(order.destination_point)}</span>
-                </div>
-                <hr class="border-zinc-700">
-                <div class="space-y-1">
-                    ${(order.items || []).map(i => `
-                        <div class="flex justify-between text-sm">
-                            <span>${escapeHtml(i.name)} × ${i.quantity}</span>
-                            <span>${formatPrice(i.price * i.quantity)}</span>
-                        </div>
-                    `).join('')}
-                </div>
-                <hr class="border-zinc-700">
-                <div class="flex justify-between font-bold text-lg">
-                    <span>Total</span>
-                    <span class="text-green-400">${formatPrice(order.total_price)}</span>
-                </div>
-            </div>
-        `;
-    }
-    document.getElementById('payment-modal').classList.remove('hidden');
-}
-
-function closePaymentModal() {
-    document.getElementById('payment-modal').classList.add('hidden');
-    paymentOrderId = null;
-}
-
-async function processPayment(method) {
-    if (!paymentOrderId) return;
-    const data = await apiFetch(`/api/orders/${paymentOrderId}/payment`, {
-        method: 'POST',
-        body: JSON.stringify({ method })
-    });
-    closePaymentModal();
-    if (data.success) {
-        showReceiptModal(data.data);
-        showNotification(`Payment successful — ${method.toUpperCase()}`);
-    }
-    loadMyOrders();
-}
-
-function showReceiptModal(invoice) {
-    const content = document.getElementById('receipt-content');
-    content.innerHTML = `
-        <div class="text-center mb-4">
-            <div class="text-lg font-bold">🤖 Delivery Bot</div>
-            <div class="text-xs text-gray-500">SE Preliminary — Invoice</div>
-            <div class="text-xs text-gray-400 mt-1">${invoice.paidAt ? new Date(invoice.paidAt).toLocaleString('vi-VN') : ''}</div>
-        </div>
-        <div class="border-t border-dashed border-gray-300 my-2"></div>
-        <div class="text-xs space-y-1">
-            <div class="flex justify-between"><span>Invoice</span><span class="font-bold">${escapeHtml(invoice.invoiceId)}</span></div>
-            <div class="flex justify-between"><span>Order</span><span>#${invoice.orderId}</span></div>
-            <div class="flex justify-between"><span>Customer</span><span>${escapeHtml(invoice.customerName || '')}</span></div>
-            <div class="flex justify-between"><span>Dest.</span><span>${escapeHtml(invoice.destination || '')}</span></div>
-        </div>
-        <div class="border-t border-dashed border-gray-300 my-2"></div>
-        <div class="text-xs space-y-1">
-            ${(invoice.items || []).map(i => `
-                <div class="flex justify-between">
-                    <span>${escapeHtml(i.name)} × ${i.quantity}</span>
-                    <span>${formatPrice(i.subtotal || i.price * i.quantity)}</span>
-                </div>
-            `).join('')}
-        </div>
-        <div class="border-t border-dashed border-gray-300 my-2"></div>
-        <div class="flex justify-between font-bold text-base">
-            <span>TOTAL</span>
-            <span>${formatPrice(invoice.totalPrice)}</span>
-        </div>
-        <div class="flex justify-between text-xs mt-1">
-            <span>Method</span>
-            <span class="uppercase font-bold">${escapeHtml(invoice.paymentMethod || 'cash')}</span>
-        </div>
-        <div class="text-center text-xs text-gray-400 mt-4">
-            ✅ PAID — Thank you!
-        </div>
-    `;
-    document.getElementById('receipt-modal').classList.remove('hidden');
-}
-
-function closeReceiptModal() {
-    document.getElementById('receipt-modal').classList.add('hidden');
 }
 
 // ── WASD Keyboard Controls ──
