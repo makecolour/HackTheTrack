@@ -716,6 +716,3 @@ function drawMinimap() {
         ctx.stroke();
     }
 }
-
-// Track all orders for staff payment processing
-let allOrdersCache = [];
