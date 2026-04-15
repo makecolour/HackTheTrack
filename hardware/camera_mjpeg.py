@@ -7,6 +7,7 @@ The camera process is fully managed: auto-started, monitored, and restarted.
 """
 import asyncio
 import logging
+import os
 import shutil
 import subprocess
 
@@ -16,6 +17,13 @@ _SOI = b'\xff\xd8'
 _EOI = b'\xff\xd9'
 
 
+def _env_bool(name, default=False):
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
 class MJPEGCamera:
     def __init__(self, host='localhost', port=8554, width=640, height=480, fps=15):
         self.host = host
@@ -23,6 +31,7 @@ class MJPEGCamera:
         self.width = width
         self.height = height
         self.fps = fps
+        self.reverse = _env_bool('CAMERA_REVERSE', False)
         self._latest_frame = None
         self._frame_event = asyncio.Event()
         self._running = False
@@ -89,6 +98,9 @@ class MJPEGCamera:
             '--listen',
             '-o', f'tcp://0.0.0.0:{self.port}',
         ]
+        if self.reverse:
+            # 180-degree rotation for upside-down camera mounting.
+            cmd.extend(['--hflip', '--vflip'])
         logger.info(f"Starting camera: {' '.join(cmd)}")
         try:
             self._process = subprocess.Popen(
