@@ -262,7 +262,7 @@ class Daemon:
             pass
         finally:
             self.motor.cleanup()
-            self.camera.cleanup()
+            await self.camera.stop()
             if self.rfid:
                 self.rfid.cleanup()
             await runner.cleanup()
@@ -302,7 +302,7 @@ class Daemon:
             if self.camera._running:
                 continue
             logger.info("Attempting camera restart...")
-            self.camera.cleanup()  # Kill any stale rpicam-vid
+            await self.camera.stop()  # Kill stale stream/task/process cleanly
             ok = await self.camera.start()  # Re-launches rpicam-vid + reconnects
             if ok:
                 logger.info("Camera restarted successfully!")

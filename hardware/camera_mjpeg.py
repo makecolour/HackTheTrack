@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 import subprocess
+from contextlib import suppress
 
 logger = logging.getLogger('camera_mjpeg')
 
@@ -36,6 +37,8 @@ class MJPEGCamera:
         self._frame_event = asyncio.Event()
         self._running = False
         self._process = None  # rpicam-vid subprocess
+        self._read_task = None
+        self._stream_writer = None
 
     async def start(self):
         """Launch rpicam-vid and connect to its TCP stream."""
@@ -52,11 +55,12 @@ class MJPEGCamera:
         # Connect to the TCP stream
         for attempt in range(5):
             try:
-                reader, _ = await asyncio.wait_for(
+                reader, writer = await asyncio.wait_for(
                     asyncio.open_connection(self.host, self.port), timeout=5
                 )
                 self._running = True
-                asyncio.ensure_future(self._read_loop(reader))
+                self._stream_writer = writer
+                self._read_task = asyncio.create_task(self._read_loop(reader))
                 logger.info(f"Camera connected tcp://{self.host}:{self.port}")
                 return True
             except Exception as e:
@@ -159,11 +163,32 @@ class MJPEGCamera:
                     self._latest_frame = frame
                     self._frame_event.set()
                     self._frame_event.clear()
+        except asyncio.CancelledError:
+            logger.info("Camera read loop cancelled")
+            raise
         except Exception as e:
             logger.error(f"Camera read loop error: {e}")
         finally:
             self._running = False
             logger.warning("Camera stream ended")
+
+    async def stop(self):
+        """Stop read task and camera subprocess cleanly."""
+        self._running = False
+
+        if self._stream_writer:
+            self._stream_writer.close()
+            with suppress(Exception):
+                await self._stream_writer.wait_closed()
+            self._stream_writer = None
+
+        if self._read_task:
+            self._read_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._read_task
+            self._read_task = None
+
+        self._stop_rpicam()
 
     @property
     def frame(self):
@@ -177,6 +202,11 @@ class MJPEGCamera:
         return self._latest_frame
 
     def cleanup(self):
-        """Stop camera subprocess. Call on daemon shutdown."""
+        """Backward-compatible sync wrapper; prefer awaiting stop()."""
         self._running = False
+        if self._read_task:
+            self._read_task.cancel()
+        if self._stream_writer:
+            self._stream_writer.close()
+            self._stream_writer = None
         self._stop_rpicam()
