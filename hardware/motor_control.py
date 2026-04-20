@@ -7,6 +7,7 @@ Neutral: 1500 µs, Drive: ±300 µs, Turn: ±200 µs
 Left servo is mirror-mounted: actual = 3000 - pulse_us
 """
 import logging
+import os
 import time
 
 logger = logging.getLogger('motor_control')
@@ -24,6 +25,19 @@ PWM_FREQ = 50
 STOP_VAL = 1500
 DRIVE_SPEED = 300
 TURN_SPEED = 200
+
+
+def _read_int_env(names, default):
+    for name in names:
+        raw = os.getenv(name)
+        if raw is None or raw == '':
+            continue
+        try:
+            return int(raw)
+        except ValueError:
+            logger.warning("Invalid %s=%r, using %s", name, raw, default)
+            return default
+    return default
 
 
 class MockMotor:
@@ -47,6 +61,8 @@ class ServoMotor:
         self.right_pin = cfg.get('right_pin', RIGHT_PIN)
         self.drive_speed = cfg.get('drive_speed', DRIVE_SPEED)
         self.turn_speed = cfg.get('turn_speed', TURN_SPEED)
+        cfg_diff = cfg.get('servo_diff_us', cfg.get('servo_diff', 0))
+        self.servo_diff_us = _read_int_env(['SERVO_DIFF', 'MOTOR_SERVO_DIFF_US'], cfg_diff)
         self.status = 'idle'
         self._h = None
         self._init_gpio()
@@ -56,7 +72,10 @@ class ServoMotor:
             self._h = gpio_open()
             lgpio.gpio_claim_output(self._h, self.left_pin)
             lgpio.gpio_claim_output(self._h, self.right_pin)
-            logger.info(f"Servo motor ready: L=GPIO{self.left_pin}, R=GPIO{self.right_pin}")
+            logger.info(
+                f"Servo motor ready: L=GPIO{self.left_pin}, R=GPIO{self.right_pin}, "
+                f"servo_diff_us={self.servo_diff_us}"
+            )
         except Exception as e:
             logger.error(f"GPIO init failed: {e}")
             self._h = None
@@ -73,7 +92,20 @@ class ServoMotor:
         except Exception as e:
             logger.error(f"PWM error pin {pin}: {e}")
 
+    def _offset_magnitude(self, pulse_us, offset_us):
+        if pulse_us == STOP_VAL or offset_us == 0:
+            return pulse_us
+        delta = pulse_us - STOP_VAL
+        sign = 1 if delta > 0 else -1
+        magnitude = max(0, abs(delta) + int(round(offset_us)))
+        adjusted = STOP_VAL + sign * magnitude
+        return max(1000, min(2000, adjusted))
+
     def _drive(self, left_us, right_us):
+        # Apply a signed left-right trim around neutral for servo calibration.
+        half_diff = self.servo_diff_us / 2.0
+        left_us = self._offset_magnitude(left_us, half_diff)
+        right_us = self._offset_magnitude(right_us, -half_diff)
         # Left servo mirror-mounted: invert
         self._set_pwm(self.left_pin, 3000 - left_us)
         self._set_pwm(self.right_pin, right_us)
@@ -103,7 +135,7 @@ class ServoMotor:
         self.stop()
 
     def get_status(self):
-        return {'driver': 'lgpio', 'status': self.status}
+        return {'driver': 'lgpio', 'status': self.status, 'servo_diff_us': self.servo_diff_us}
 
 
 def create_motor(config):
