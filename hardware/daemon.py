@@ -66,6 +66,42 @@ from aiohttp import web
 
 
 class Daemon:
+    @staticmethod
+    def _resolve_rfid_spi(rfid_cfg):
+        def _as_int(value, default):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        bus = _as_int(rfid_cfg.get('bus', 0), 0)
+        device = _as_int(rfid_cfg.get('device', 0), 0)
+
+        requested = f"/dev/spidev{bus}.{device}"
+        if os.path.exists(requested):
+            return bus, device
+
+        # Pi 5 commonly exposes SPI0 as bus 10 (/dev/spidev10.x).
+        fallback_paths = []
+        for candidate_bus in (10, 0):
+            if candidate_bus == bus:
+                continue
+            candidate = f"/dev/spidev{candidate_bus}.{device}"
+            fallback_paths.append(candidate)
+            if os.path.exists(candidate):
+                logger.warning(
+                    "Configured RFID SPI device %s not found; using %s instead.",
+                    requested,
+                    candidate,
+                )
+                return candidate_bus, device
+
+        logger.warning(
+            "RFID SPI device not found. Tried %s.",
+            ", ".join([requested, *fallback_paths]),
+        )
+        return bus, device
+
     def __init__(self):
         self.motor = create_motor(CONFIG)
         cam_cfg = CONFIG.get('camera', {})
@@ -80,15 +116,17 @@ class Daemon:
         self.rfid_scanning = True
         if RFID_AVAILABLE:
             rfid_cfg = CONFIG.get('rfid', {})
+            bus, device = 0, 0
             try:
+                bus, device = self._resolve_rfid_spi(rfid_cfg)
                 self.rfid = MFRC522Reader(
-                    bus=rfid_cfg.get('bus', 0),
-                    device=rfid_cfg.get('device', 0),
+                    bus=bus,
+                    device=device,
                     rst_pin=rfid_cfg.get('rst_pin', 25),
                     gpio_chip=rfid_cfg.get('gpio_chip', 0),
                 )
             except Exception as e:
-                logger.warning(f"RFID init failed: {e}")
+                logger.warning(f"RFID init failed on /dev/spidev{bus}.{device}: {e}")
 
         self.sio = None
         self.server_url = CONFIG.get('server_url', 'http://localhost:3000')
